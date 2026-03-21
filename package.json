@@ -1,0 +1,12 @@
+{
+  "name": "ai-news-pipeline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run:pipeline": "node src/main.mjs",
+    "run:pipeline:verbose": "node src/main.mjs --verbose"
+  },
+  "devDependencies": {
+    "@openai/codex": "^0.114.0"
+  }
+}

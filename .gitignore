@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+
+logs/
+data/
+reports/
+
+.DS_Store
+Thumbs.db

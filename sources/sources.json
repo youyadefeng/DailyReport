@@ -1,0 +1,28 @@
+{
+  "sources": [
+    {
+      "name": "OpenAI News",
+      "type": "rss",
+      "url": "https://openai.com/news/rss.xml",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "product"]
+    },
+    {
+      "name": "Google AI Blog",
+      "type": "rss",
+      "url": "https://blog.google/technology/ai/rss/",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "blog"]
+    },
+    {
+      "name": "Hacker News AI",
+      "type": "rss",
+      "url": "https://hnrss.org/newest?q=AI",
+      "limit": 15,
+      "priority": 2,
+      "tags": ["community", "trending"]
+    }
+  ]
+}
