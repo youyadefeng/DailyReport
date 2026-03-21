@@ -3,8 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "run:pipeline": "node src/main.mjs",
-    "run:pipeline:verbose": "node src/main.mjs --verbose"
+    "run:pipeline": "node src/bootstrap.mjs",
+    "run:pipeline:verbose": "node src/bootstrap.mjs --verbose",
+    "run:pipeline:github": "node src/bootstrap.mjs --source github",
+    "run:pipeline:github:verbose": "node src/bootstrap.mjs --source github --verbose"
   },
   "devDependencies": {
     "@openai/codex": "^0.114.0"

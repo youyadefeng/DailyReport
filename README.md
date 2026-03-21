@@ -9,6 +9,7 @@
 - 用链接去重，累计保存到 `data/entries.json`
 - 为每条内容生成摘要、分类和简单分数
 - 生成 `reports/YYYY-MM-DD.md` 日报
+- 可选接入 OpenAI，把标题和摘要翻译成中文
 
 ## 使用方式
 
@@ -21,6 +22,40 @@ npm run run:pipeline
 ```bash
 npm run run:pipeline:verbose
 ```
+
+## 中文翻译
+
+推荐做法是使用本地私密配置文件：
+
+1. 复制 [.env.example](F:\CodexProject\.env.example) 为 `.env.local`
+2. 只填写你要用的那一种 provider
+3. 直接双击 [run_pipeline.bat](F:\CodexProject\run_pipeline.bat)
+
+`.env.local` 已经被 [.gitignore](F:\CodexProject\.gitignore) 忽略，不会进 Git。
+
+### 方案一：OpenAI
+
+```env
+OPENAI_API_KEY=your_api_key
+OPENAI_TRANSLATION_MODEL=gpt-4o-mini
+OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+### 方案二：MiniMax
+
+```env
+MINIMAX_API_KEY=your_api_key
+MINIMAX_TRANSLATION_MODEL=MiniMax-M2.5
+MINIMAX_BASE_URL=https://api.minimax.io/v1
+```
+
+如果两个都配置了，当前会优先使用 `OpenAI`。
+
+启用后：
+
+- 新抓到的标题会写入 `titleZh`
+- 新抓到的摘要会写入 `summaryZh`
+- 日报优先显示中文，下面保留原始英文标题
 
 ## 信息源配置
 
