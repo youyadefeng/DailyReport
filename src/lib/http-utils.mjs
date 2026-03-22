@@ -111,7 +111,9 @@ function requestRaw(url, options, resolve, reject) {
 
 function shouldUseCurlFallback(url, error) {
   const hostname = new URL(url).hostname.toLowerCase();
-  if (!(hostname === "huggingface.co" || hostname.endsWith(".huggingface.co"))) {
+  const isHuggingFace = hostname === "huggingface.co" || hostname.endsWith(".huggingface.co");
+  const isGoogleCloudBlog = hostname === "cloud.google.com";
+  if (!(isHuggingFace || isGoogleCloudBlog)) {
     return false;
   }
 

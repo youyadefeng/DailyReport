@@ -46,6 +46,25 @@
       "tags": ["official", "blog"]
     },
     {
+      "name": "Google Developers AI",
+      "enabled": true,
+      "type": "rss",
+      "url": "https://blog.google/innovation-and-ai/technology/developers-tools/rss/",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "developers", "engineering"]
+    },
+    {
+      "name": "Google Cloud Developers",
+      "enabled": true,
+      "type": "google-cloud-blog-html",
+      "url": "https://cloud.google.com/blog/topics/developers-practitioners",
+      "pathPrefix": "/blog/topics/developers-practitioners/",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "developers", "engineering", "cloud"]
+    },
+    {
       "name": "Meta AI News",
       "enabled": true,
       "type": "rss",

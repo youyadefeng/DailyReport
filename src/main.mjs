@@ -79,8 +79,17 @@ try {
       );
     }
   }
+  if (result.reportHighlightsPractice?.length > 0) {
+    console.log("实践类型今日重点预览:");
+    for (const [index, entry] of result.reportHighlightsPractice.entries()) {
+      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
+      if (entry.highlightReasonZh) {
+        console.log(`   入选理由: ${entry.highlightReasonZh}`);
+      }
+    }
+  }
   if (result.reportHighlightsNonGithub?.length > 0) {
-    console.log("\u975e GitHub \u4eca\u65e5\u91cd\u70b9\u9884\u89c8:");
+    console.log("新闻资讯今日重点预览:");
     for (const [index, entry] of result.reportHighlightsNonGithub.entries()) {
       console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
       if (entry.highlightReasonZh) {
@@ -97,6 +106,15 @@ try {
       const popularityScore = stars * 5 + forks * 3 + watchers;
       console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}] | \u70ed\u5ea6\u5206 ${popularityScore}`);
     }
+  }
+  if (result.practiceReadGeneratedCount > 0) {
+    console.log("工程实践精读已生成:");
+    for (const [index, item] of result.practiceReadItems.entries()) {
+      console.log(`${index + 1}. ${item.title} -> ${item.path}`);
+    }
+    console.log(
+      `实践精读 Token 消耗: 输入 ${result.practiceReadUsage.inputTokens} | 输出 ${result.practiceReadUsage.outputTokens} | 合计 ${result.practiceReadUsage.totalTokens}`
+    );
   }
 } catch (error) {
   console.error(error);

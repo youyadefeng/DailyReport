@@ -1,10 +1,53 @@
 import { APP_CONFIG } from "../../config/project.config.mjs";
 
 const CATEGORY_RULES = APP_CONFIG.categorization.rules;
+const PRACTICE_SOURCE_NAMES = new Set([
+  "Anthropic Engineering",
+  "Anthropic Research",
+  "Google Developers AI",
+  "Google Cloud Developers"
+]);
+const STRONG_PRACTICE_KEYWORDS = [
+  "engineering",
+  "developers",
+  "developer",
+  "guide",
+  "guides",
+  "tutorial",
+  "tutorials",
+  "workflow",
+  "workflows",
+  "best practices",
+  "how to",
+  "building",
+  "build ",
+  "api",
+  "tooling",
+  "agentic",
+  "agents",
+  "harness",
+  "cookbook",
+  "ai studio"
+];
+const PRACTICE_HINT_KEYWORDS = [
+  "implementation",
+  "implementing",
+  "technique",
+  "techniques",
+  "evaluation",
+  "evaluations",
+  "structured outputs",
+  "prompt injection",
+  "computer use",
+  "grounding",
+  "integration",
+  "integrations",
+  "full-stack"
+];
 
 export function stripHtml(value) {
   return decodeHtmlEntities(
-    value
+    String(value ?? "")
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
@@ -14,7 +57,7 @@ export function stripHtml(value) {
 }
 
 export function decodeHtmlEntities(value) {
-  return value
+  return String(value ?? "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
@@ -42,7 +85,7 @@ export function buildSummary(text, maxSentences = 2) {
 }
 
 export function sanitizeFeedNoise(text) {
-  return String(text)
+  return String(text ?? "")
     .replace(/Comments URL:\s*\S+/gi, " ")
     .replace(/Article URL:\s*\S+/gi, " ")
     .replace(/Points:\s*\d+/gi, " ")
@@ -67,7 +110,7 @@ export function prepareTranslationText(text, maxLength = 600) {
     return normalized;
   }
 
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
 }
 
 export function categorizeText(...values) {
@@ -87,6 +130,9 @@ export function scoreEntry({ title, summary, source }) {
   if (source?.priority) {
     score += source.priority * 10;
   }
+  if (PRACTICE_SOURCE_NAMES.has(source?.name)) {
+    score += 30;
+  }
   if (corpus.includes("release") || corpus.includes("launch")) {
     score += 15;
   }
@@ -95,6 +141,15 @@ export function scoreEntry({ title, summary, source }) {
   }
   if (corpus.includes("github") || corpus.includes("open source")) {
     score += 8;
+  }
+  if (STRONG_PRACTICE_KEYWORDS.some((keyword) => corpus.includes(keyword))) {
+    score += 25;
+  }
+  if (PRACTICE_HINT_KEYWORDS.some((keyword) => corpus.includes(keyword))) {
+    score += 12;
+  }
+  if (source?.tags?.includes("engineering") || source?.tags?.includes("developers")) {
+    score += 12;
   }
 
   return Math.max(0, Math.min(100, score));
@@ -106,6 +161,19 @@ export function slugDate(date = new Date()) {
 
 export function slugHour(date = new Date()) {
   return formatDateParts(date).hour;
+}
+
+export function localDateSlugFromValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+
+  return formatDateParts(parsed).day;
 }
 
 function formatDateParts(date) {

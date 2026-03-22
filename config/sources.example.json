@@ -3,7 +3,7 @@
   "fieldGuide": {
     "name": "Display name shown in terminal output and reports.",
     "enabled": "Whether this source is active. Set false to keep the config but skip collection.",
-    "type": "Supported values: rss, github-api-search, anthropic-news-html, huggingface-blog-html.",
+    "type": "Supported values: rss, github-api-search, anthropic-news-html, huggingface-blog-html, google-cloud-blog-html.",
     "url": "RSS/Atom URL or GitHub Search API URL.",
     "timeoutMs": "Optional per-source timeout in milliseconds. Useful for large or slow feeds.",
     "limit": "Max items fetched per run for this source.",
@@ -44,6 +44,27 @@
       "priority": 3,
       "tags": ["official", "blog"],
       "notes": "Official Google AI updates."
+    },
+    {
+      "name": "Google Developers AI",
+      "enabled": true,
+      "type": "rss",
+      "url": "https://blog.google/innovation-and-ai/technology/developers-tools/rss/",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "developers", "engineering"],
+      "notes": "Official Google developer-focused AI updates, including Gemini API, AI Studio, and tooling."
+    },
+    {
+      "name": "Google Cloud Developers",
+      "enabled": true,
+      "type": "google-cloud-blog-html",
+      "url": "https://cloud.google.com/blog/topics/developers-practitioners",
+      "pathPrefix": "/blog/topics/developers-practitioners/",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "developers", "engineering", "cloud"],
+      "notes": "Google Cloud Developers & Practitioners page, useful for ADK, MCP, agent engineering, and cloud-side AI implementation articles."
     },
     {
       "name": "Meta AI News",

@@ -9,79 +9,68 @@ export const APP_CONFIG = {
   // 所有日期、日报文件名、时间显示都使用这个时区。
   timeZone: "Asia/Shanghai",
 
-  // 管线使用到的主要文件路径。
-  // 如果你以后想调整配置文件、数据文件、日报输出目录，可以改这里。
+  // 管线用到的主要文件路径。
   paths: {
     rootDir: ROOT_DIR,
-    // 主信息源列表，管线会从这里读取要抓哪些源。
+    // 信息源配置文件。
     sources: path.join(ROOT_DIR, "config", "sources.json"),
-    // 本地条目库存目录，按天保存累计抓到的所有内容。
+    // 本地条目库存目录，按天存储。
     storeDir: path.join(ROOT_DIR, "data", "entries"),
-    // 旧版单文件库存，用于兼容迁移。
+    // 旧版单文件库存，保留给迁移兼容使用。
     storeLegacyFile: path.join(ROOT_DIR, "data", "entries.json"),
-    // Markdown 日报输出目录。
+    // 日报输出目录。
     reportsDir: path.join(ROOT_DIR, "reports"),
-    // 当天翻译/Highlights 打分缓存，用来减少重复调用大模型。
+    // 工程实践精读历史记录，避免重复精读同一篇文章。
+    practiceReadHistoryFile: path.join(ROOT_DIR, "data", "practice-reads", "history.json"),
+    // 本地 LLM 缓存目录，按天存储。
     llmCacheDir: path.join(ROOT_DIR, "data", "llm-cache"),
+    // 旧版单文件 LLM 缓存，保留给迁移兼容使用。
     llmCacheLegacyFile: path.join(ROOT_DIR, "data", "llm-cache.json"),
-    // 本地私密环境变量文件，放 API key 和本地覆盖配置。
+    // 本地私密环境变量文件。
     localEnv: path.join(ROOT_DIR, "config", ".env.local")
   },
 
-  // 网络请求相关默认值。
-  // 如果某些信息源很慢，可以适当调大；如果你想更快失败，可以调小。
+  // 网络请求默认配置。
   network: {
-    // 通用请求超时，供共享 HTTP 工具使用。
     defaultTimeoutMs: 30000,
-    // 最多允许跟随多少次 HTTP 重定向。
     defaultMaxRedirects: 5,
-    // RSS 通常更轻，超时可以设得短一点。
     rssTimeoutMs: 20000,
-    // 非 RSS 源，比如 GitHub API，通常会更慢一些。
     sourceTimeoutMs: 45000,
-    // GitHub 额外请求贡献者数量时使用的超时。
     githubContributorTimeoutMs: 15000
   },
 
-  // 管线抓取重试策略。
+  // 抓取失败时的重试次数。
   pipeline: {
-    // 单个信息源最多重试几次，超过后记为失败。
     maxFetchAttempts: 3
   },
 
-  // 本地缓存策略。
+  // 本地缓存保留策略。
   cache: {
-    // 本地 LLM 缓存保留多少天。
-    // 也可以在 .env.local 里用 LLM_CACHE_RETENTION_DAYS 覆盖。
+    // 只影响 data/llm-cache，不影响日报和 entries 库存。
     retentionDays: getEnvNumber("LLM_CACHE_RETENTION_DAYS", 30)
   },
 
-  // 翻译步骤相关设置。
+  // 翻译相关配置。
   translation: {
     chunkSize: {
-      // OpenAI 通常可以一次处理多条。
       openai: 8,
-      // MiniMax 目前按 2 条一批，兼顾速度和 JSON 稳定性。
+      // MiniMax 当前折中为 2 条一批，兼顾速度和 JSON 稳定性。
       minimax: 2
     },
     openai: {
-      // 使用 OpenAI 翻译时的默认 API 地址。
       defaultBaseUrl: "https://api.openai.com/v1",
-      // 如果没有在 .env.local 里设置 OPENAI_TRANSLATION_MODEL，就用这个默认模型。
       defaultModel: "gpt-4o-mini"
     },
     minimax: {
-      // MiniMax 国际版默认地址。中国大陆账号通常会在 .env.local 里改成国内地址。
+      // 中国大陆账号通常会在 .env.local 里覆盖成 https://api.minimaxi.com/v1
       defaultBaseUrl: "https://api.minimax.io/v1",
-      // 如果没有在 .env.local 里设置 MINIMAX_TRANSLATION_MODEL，就用这个默认模型。
       defaultModel: "MiniMax-M2.5"
     }
   },
 
-  // Highlights 重点排序相关设置。
+  // Highlights 排序相关配置。
   highlights: {
-    // 送给大模型做重点重排的候选条目数。
-    // 调大可能会稍微提升质量，但会增加耗时和 token 消耗。
+    // 送给大模型重排的候选数。
     maxCandidates: 10,
     openai: {
       defaultBaseUrl: "https://api.openai.com/v1",
@@ -89,17 +78,32 @@ export const APP_CONFIG = {
     },
     minimax: {
       defaultBaseUrl: "https://api.minimax.io/v1",
-      // 如果没有在 .env.local 里设置 MINIMAX_HIGHLIGHT_MODEL，就用这个默认模型。
       defaultModel: "MiniMax-M2.7-highspeed"
     }
   },
 
-  // GitHub 相关解析设置。
+  // 工程实践精读配置。
+  practiceReads: {
+    // 每次运行最多生成几篇新的精读。
+    maxPerRun: 2,
+    // 只从实践榜前几名里挑，避免范围太散。
+    candidatePoolSize: 10,
+    // 抓正文后最多送多少字符给大模型。
+    maxArticleChars: 12000,
+    // 在 hourly 报告目录下输出到这个子目录。
+    outputDirName: "practice-reads",
+    // 配图比例。
+    imageAspectRatio: "16:9",
+    minimax: {
+      defaultBaseUrl: "https://api.minimax.io/v1",
+      textModel: "MiniMax-M2.7-highspeed",
+      imageModel: "image-01"
+    }
+  },
+
+  // GitHub 相关默认配置。
   github: {
-    // GitHub API 请求头里的 accept。
     apiAccept: "application/vnd.github+json",
-    // 用于 GitHub HTML 解析器和后续关键词过滤，
-    // 帮助判断一个仓库是不是 AI 相关。
     defaultAiKeywords: [
       "ai",
       "artificial intelligence",
@@ -119,8 +123,7 @@ export const APP_CONFIG = {
     ]
   },
 
-  // 在进入 LLM 排序前，先做一层基础规则分类。
-  // 除非你想调整日报分区，否则通常不需要改这里。
+  // 规则分类，用于日报分区和基础打分。
   categorization: {
     rules: [
       { category: "Models", keywords: ["model", "llm", "gpt", "claude", "gemini", "reasoning"] },

@@ -4,9 +4,18 @@ import { readJson, writeJson, ensureDir } from "./fs-utils.mjs";
 import { parseGitHubSearchResponse } from "./github-api.mjs";
 import { parseAnthropicNews } from "./anthropic-news.mjs";
 import { parseHuggingFaceBlog } from "./huggingface-blog.mjs";
+import { parseGoogleCloudBlog } from "./google-cloud-blog.mjs";
 import { fetchText } from "./http-utils.mjs";
 import { parseRss } from "./rss.mjs";
-import { buildSummary, categorizeText, sanitizeFeedNoise, scoreEntry, slugDate, slugHour } from "./text-utils.mjs";
+import {
+  buildSummary,
+  categorizeText,
+  localDateSlugFromValue,
+  sanitizeFeedNoise,
+  scoreEntry,
+  slugDate,
+  slugHour
+} from "./text-utils.mjs";
 import { APP_CONFIG } from "../../config/project.config.mjs";
 import {
   getCachedHighlight,
@@ -24,6 +33,7 @@ import {
   pickHighlightCandidates,
   scoreHighlightCandidates
 } from "./highlight-scorer.mjs";
+import { generatePracticeReads } from "./practice-reads.mjs";
 import { getTranslationConfig, translateEntries } from "./translator.mjs";
 
 const SOURCES_PATH = APP_CONFIG.paths.sources;
@@ -32,7 +42,14 @@ const STORE_LEGACY_FILE = APP_CONFIG.paths.storeLegacyFile;
 const REPORTS_DIR = APP_CONFIG.paths.reportsDir;
 const MAX_FETCH_ATTEMPTS = APP_CONFIG.pipeline.maxFetchAttempts;
 const NON_GITHUB_HIGHLIGHT_LIMIT = 20;
+const PRACTICE_HIGHLIGHT_LIMIT = 10;
 const GITHUB_HIGHLIGHT_LIMIT = 10;
+const PRACTICE_SOURCE_NAMES = new Set([
+  "Anthropic Engineering",
+  "Anthropic Research",
+  "Google Developers AI",
+  "Google Cloud Developers"
+]);
 const ANSI = {
   reset: "\u001b[0m",
   dim: "\u001b[2m",
@@ -99,7 +116,7 @@ export async function saveStore(store) {
   const byDay = new Map();
 
   for (const entry of store.entries ?? []) {
-    const day = String(entry.fetchedAt || "").slice(0, 10) || slugDate();
+    const day = localDateSlugFromValue(entry.fetchedAt) || slugDate();
     const bucket = byDay.get(day) ?? [];
     bucket.push(entry);
     byDay.set(day, bucket);
@@ -123,7 +140,7 @@ export async function fetchSource(source) {
           ? "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
           : source.type === "github-api-search"
             ? "application/vnd.github+json"
-            : source.type === "anthropic-news-html" || source.type === "huggingface-blog-html"
+            : source.type === "anthropic-news-html" || source.type === "huggingface-blog-html" || source.type === "google-cloud-blog-html"
               ? "text/html,application/xhtml+xml"
               : "text/html,application/xhtml+xml"
     },
@@ -141,6 +158,8 @@ export async function fetchSource(source) {
       return parseAnthropicNews(body, source);
     case "huggingface-blog-html":
       return parseHuggingFaceBlog(body, source);
+    case "google-cloud-blog-html":
+      return parseGoogleCloudBlog(body, source);
     default:
       throw new Error(`Unsupported source type: ${source.type}`);
   }
@@ -284,7 +303,7 @@ function getGitHubPopularityScore(entry) {
 function summarizeNonGithubHighlights(entries) {
   if (entries.length === 0) {
     return {
-      headline: "今天没有值得关注的非 GitHub 重点消息。",
+      headline: "今天没有值得关注的新闻资讯重点。",
       stats: ""
     };
   }
@@ -292,8 +311,24 @@ function summarizeNonGithubHighlights(entries) {
   const topSources = collectTopLabels(entries.map((entry) => entry.source));
   const topCategories = collectTopLabels(entries.map((entry) => entry.category));
   return {
-    headline: `今天的非 GitHub 重点主要集中在 ${topCategories}。`,
-    stats: `共选出 ${entries.length} 条重点，主要来自 ${topSources}。`
+    headline: `今天的新闻资讯重点主要集中在 ${topCategories}。`,
+    stats: `共选出 ${entries.length} 条新闻资讯重点，主要来自 ${topSources}。`
+  };
+}
+
+function summarizePracticeHighlights(entries) {
+  if (entries.length === 0) {
+    return {
+      headline: "今天没有值得关注的实践型内容。",
+      stats: ""
+    };
+  }
+
+  const topSources = collectTopLabels(entries.map((entry) => entry.source));
+  const topCategories = collectTopLabels(entries.map((entry) => entry.category));
+  return {
+    headline: `今天的实践型重点主要集中在 ${topCategories}。`,
+    stats: `共选出 ${entries.length} 条实践重点，主要来自 ${topSources}。`
   };
 }
 
@@ -360,6 +395,10 @@ function appendNonGithubHighlight(lines, entry, index) {
     lines.push(`   原文标题：${entry.title}`);
   }
   lines.push("");
+}
+
+function isPracticeEntry(entry) {
+  return PRACTICE_SOURCE_NAMES.has(entry.source);
 }
 
 function appendGithubHighlight(lines, entry, index) {
@@ -515,6 +554,9 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
   let llmHighlightRequestedCount = 0;
   let llmHighlightRequestBatchCount = 0;
   let llmHighlightUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  let practiceReadGeneratedCount = 0;
+  let practiceReadItems = [];
+  let practiceReadUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
   if (sources.length === 0) {
     throw new Error("No sources matched the requested filters.");
@@ -726,10 +768,31 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
   llmHighlightRequestedCount = reportOutput.llmHighlightRequestedCount;
   llmHighlightRequestBatchCount = reportOutput.llmHighlightRequestBatchCount;
   llmHighlightUsage = reportOutput.llmHighlightUsage;
+  const practiceReadOutput = await generatePracticeReads(reportOutput.practiceTopEntries, {
+    reportDir: path.dirname(reportOutput.reportPath),
+    verbose
+  });
+  practiceReadGeneratedCount = practiceReadOutput.generatedCount;
+  practiceReadItems = practiceReadOutput.generatedItems;
+  practiceReadUsage = practiceReadOutput.usage;
   await saveLlmCache(llmCache);
 
   if (verbose) {
     console.log(colorize(`[4/4] \u65e5\u62a5\u5df2\u5199\u5165: ${reportOutput.reportPath}`, "green"));
+    if (practiceReadGeneratedCount > 0) {
+      console.log(colorize(`[4/4] 工程实践精读已生成: ${practiceReadGeneratedCount} 篇`, "green"));
+      for (const [index, item] of practiceReadItems.entries()) {
+        console.log(`       ${index + 1}. ${truncate(item.title, 95)} -> ${item.relativePath}`);
+      }
+      if (practiceReadUsage.totalTokens > 0) {
+        console.log(
+          colorize(
+            `[4/4] 实践精读 Token 消耗: 输入 ${practiceReadUsage.inputTokens} | 输出 ${practiceReadUsage.outputTokens} | 合计 ${practiceReadUsage.totalTokens}`,
+            "dim"
+          )
+        );
+      }
+    }
     if (createdEntries.length > 0) {
       console.log(colorize("[4/4] \u672c\u6b21\u771f\u65b0\u589e\u6761\u76ee:", "green"));
       for (const [createdIndex, entry] of createdEntries.slice(0, 5).entries()) {
@@ -739,12 +802,12 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
       console.log(colorize("[4/4] \u672c\u6b21\u771f\u65b0\u589e\u6761\u76ee: \u65e0", "dim"));
     }
     if (reportOutput.nonGithubTopEntries.length > 0) {
-      console.log(colorize("[4/4] \u975e GitHub \u4eca\u65e5\u91cd\u70b9:", "bold"));
+      console.log(colorize("[4/4] 新闻资讯今日重点:", "bold"));
       for (const [highlightIndex, entry] of reportOutput.nonGithubTopEntries.entries()) {
         console.log(`       ${highlightIndex + 1}. ${truncate(entry.titleZh ?? entry.title, 95)} [${entry.category}]`);
       }
     } else {
-      console.log(colorize("[4/4] \u975e GitHub \u4eca\u65e5\u91cd\u70b9: \u65e0", "dim"));
+      console.log(colorize("[4/4] 新闻资讯今日重点: 无", "dim"));
     }
     if (reportOutput.githubTopEntries.length > 0) {
       console.log(colorize("[4/4] GitHub \u4eca\u65e5\u91cd\u70b9:", "bold"));
@@ -807,8 +870,12 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     llmHighlightRequestedEntries: llmHighlightRequestedCount,
     llmHighlightRequestBatchCount,
     llmHighlightUsage,
+    practiceReadGeneratedCount,
+    practiceReadItems,
+    practiceReadUsage,
     failures,
     reportPath: reportOutput.reportPath,
+    reportHighlightsPractice: reportOutput.practiceTopEntries,
     reportHighlights: reportOutput.nonGithubTopEntries,
     reportHighlightsNonGithub: reportOutput.nonGithubTopEntries,
     reportHighlightsGithub: reportOutput.githubTopEntries
@@ -925,11 +992,20 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   const reportDir = path.join(REPORTS_DIR, reportId);
   await ensureDir(reportDir);
   const reportPath = path.join(reportDir, "overview.md");
-  const recentEntries = entries.filter((entry) => (entry.fetchedAt || "").startsWith(dateSlug));
+  const recentEntries = entries.filter((entry) => localDateSlugFromValue(entry.fetchedAt) === dateSlug);
   const nonGithubEntries = recentEntries.filter((entry) => !isGitHubEntry(entry));
+  const practiceEntries = nonGithubEntries.filter((entry) => isPracticeEntry(entry));
+  const nonGithubGeneralEntries = nonGithubEntries.filter((entry) => !isPracticeEntry(entry));
   const githubEntries = recentEntries.filter((entry) => isGitHubEntry(entry));
   const sourceGroups = groupEntriesBySource(recentEntries);
-  const nonGithubHighlightCandidates = pickHighlightCandidates(nonGithubEntries, Math.max(NON_GITHUB_HIGHLIGHT_LIMIT, 10));
+  const practiceHighlightCandidates = pickHighlightCandidates(practiceEntries, Math.max(PRACTICE_HIGHLIGHT_LIMIT, 10));
+  const scoredPracticeHighlights = await scoreHighlightCandidates(practiceHighlightCandidates, {
+    config: options.highlightScoringConfig,
+    verbose: options.verbose,
+    cache: options.highlightCache
+  });
+  const practiceTopEntries = scoredPracticeHighlights.scoredEntries.slice(0, PRACTICE_HIGHLIGHT_LIMIT);
+  const nonGithubHighlightCandidates = pickHighlightCandidates(nonGithubGeneralEntries, Math.max(NON_GITHUB_HIGHLIGHT_LIMIT, 10));
   const scoredNonGithubHighlights = await scoreHighlightCandidates(nonGithubHighlightCandidates, {
     config: options.highlightScoringConfig,
     verbose: options.verbose,
@@ -948,6 +1024,7 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     .slice(0, GITHUB_HIGHLIGHT_LIMIT);
   const githubTopEntries = [...githubRisingTopEntries, ...githubTopicTopEntries];
   const sourceReports = await writeSourceReports(sourceGroups, { reportDir, dateSlug });
+  const practiceReadIndexRelativePath = path.posix.join("practice-reads", "index.md");
 
   const lines = [
     `# AI 日报 - ${dateSlug}`,
@@ -960,15 +1037,29 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     ""
   ];
 
-  if (nonGithubTopEntries.length === 0 && githubRisingTopEntries.length === 0 && githubTopicTopEntries.length === 0) {
+  if (practiceTopEntries.length === 0 && nonGithubTopEntries.length === 0 && githubRisingTopEntries.length === 0 && githubTopicTopEntries.length === 0) {
     lines.push("今天没有采集到新条目。");
     lines.push("");
   } else {
+    const practiceSummary = summarizePracticeHighlights(practiceTopEntries);
     const nonGithubSummary = summarizeNonGithubHighlights(nonGithubTopEntries);
     const githubRisingSummary = summarizeGithubSourceHighlights("GitHub Rising AI", githubRisingTopEntries);
     const githubTopicSummary = summarizeGithubSourceHighlights("GitHub AI Topic", githubTopicTopEntries);
 
-    lines.push(`### 非 GitHub 来源 Top ${NON_GITHUB_HIGHLIGHT_LIMIT}`);
+    lines.push(`### 实践类型 Top ${PRACTICE_HIGHLIGHT_LIMIT}`);
+    lines.push("");
+    lines.push(practiceSummary.headline);
+    if (practiceSummary.stats) {
+      lines.push(practiceSummary.stats);
+    }
+    lines.push("");
+    if (practiceTopEntries.length > 0) {
+      for (const [index, entry] of practiceTopEntries.entries()) {
+        appendNonGithubHighlight(lines, entry, index + 1);
+      }
+    }
+
+    lines.push(`### 新闻资讯 Top ${NON_GITHUB_HIGHLIGHT_LIMIT}`);
     lines.push("");
     lines.push(nonGithubSummary.headline);
     if (nonGithubSummary.stats) {
@@ -1026,6 +1117,12 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     }
   }
 
+  lines.push("## 工程实践精读");
+  lines.push("");
+  lines.push(`- 精读目录: [practice-reads/index.md](${practiceReadIndexRelativePath})`);
+  lines.push("- 说明: 每天会从实践类重点里挑选最多 2 篇之前没有精读过的文章，生成图文精读。");
+  lines.push("");
+
   if (failures.length > 0) {
     lines.push("## 失败信息");
     lines.push("");
@@ -1041,13 +1138,18 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   return {
     reportPath,
     sourceReports,
+    practiceTopEntries,
     nonGithubTopEntries,
     githubTopEntries,
-    llmHighlightScoredCount: scoredNonGithubHighlights.scoredCount,
-    llmHighlightCacheHitCount: scoredNonGithubHighlights.cacheHitCount,
-    llmHighlightRequestedCount: scoredNonGithubHighlights.requestedEntries,
-    llmHighlightRequestBatchCount: scoredNonGithubHighlights.requestBatchCount,
-    llmHighlightUsage: scoredNonGithubHighlights.usage
+    llmHighlightScoredCount: scoredPracticeHighlights.scoredCount + scoredNonGithubHighlights.scoredCount,
+    llmHighlightCacheHitCount: scoredPracticeHighlights.cacheHitCount + scoredNonGithubHighlights.cacheHitCount,
+    llmHighlightRequestedCount: scoredPracticeHighlights.requestedEntries + scoredNonGithubHighlights.requestedEntries,
+    llmHighlightRequestBatchCount: scoredPracticeHighlights.requestBatchCount + scoredNonGithubHighlights.requestBatchCount,
+    llmHighlightUsage: {
+      inputTokens: scoredPracticeHighlights.usage.inputTokens + scoredNonGithubHighlights.usage.inputTokens,
+      outputTokens: scoredPracticeHighlights.usage.outputTokens + scoredNonGithubHighlights.usage.outputTokens,
+      totalTokens: scoredPracticeHighlights.usage.totalTokens + scoredNonGithubHighlights.usage.totalTokens
+    }
   };
 }
 
