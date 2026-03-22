@@ -45,7 +45,8 @@ export async function saveLlmCache(cache) {
     await writeJson(buildDayCachePath(day), {
       date: day,
       translations: value?.translations ?? {},
-      highlights: value?.highlights ?? {}
+      highlights: value?.highlights ?? {},
+      translationFailures: value?.translationFailures ?? {}
     });
   }
 
@@ -59,6 +60,18 @@ export function getCachedTranslation(cache, entryId) {
 
 export function setCachedTranslation(cache, entryId, value) {
   cache.dayCache.translations[entryId] = value;
+}
+
+export function getCachedTranslationFailure(cache, entryId) {
+  return cache.dayCache.translationFailures?.[entryId] ?? null;
+}
+
+export function setCachedTranslationFailure(cache, entryId, value) {
+  cache.dayCache.translationFailures[entryId] = value;
+}
+
+export function clearCachedTranslationFailure(cache, entryId) {
+  delete cache.dayCache.translationFailures[entryId];
 }
 
 export function getCachedHighlight(cache, entryId) {
@@ -91,7 +104,8 @@ async function loadCacheDaysFromFiles() {
 
     days[day] = {
       translations: payload.translations ?? {},
-      highlights: payload.highlights ?? {}
+      highlights: payload.highlights ?? {},
+      translationFailures: payload.translationFailures ?? {}
     };
   }
 
@@ -136,7 +150,8 @@ function createEmptyDayCache(day) {
   return {
     date: day,
     translations: {},
-    highlights: {}
+    highlights: {},
+    translationFailures: {}
   };
 }
 
@@ -164,7 +179,8 @@ function pruneDays(days, today, retentionDays) {
       nextDays[day] = {
         date: day,
         translations: value?.translations ?? {},
-        highlights: value?.highlights ?? {}
+        highlights: value?.highlights ?? {},
+        translationFailures: value?.translationFailures ?? {}
       };
     }
   }

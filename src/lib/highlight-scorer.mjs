@@ -58,13 +58,17 @@ export async function scoreHighlightCandidates(entries, { config, verbose = fals
     return {
       scoredEntries: entries,
       scoredCount: 0,
-      cacheHitCount: 0
+      cacheHitCount: 0,
+      requestedEntries: 0,
+      requestBatchCount: 0,
+      usage: createEmptyUsage()
     };
   }
 
   const mergedEntries = [];
   const pendingEntries = [];
   let cacheHitCount = 0;
+  const usage = createEmptyUsage();
 
   for (const entry of entries) {
     const cached = cache?.getHighlight?.(entry.id);
@@ -77,34 +81,49 @@ export async function scoreHighlightCandidates(entries, { config, verbose = fals
   }
 
   if (verbose) {
-    console.log(`       LLM 候选评分: ${entries.length} 条 (${config.provider} / ${config.model})`);
+    console.log(`       Highlights 候选总数: ${entries.length} 条 (${config.provider} / ${config.model})`);
     if (cacheHitCount > 0) {
       console.log(`       Highlights 缓存命中: ${cacheHitCount} 条`);
     }
   }
 
   if (pendingEntries.length === 0) {
+    if (verbose) {
+      console.log("       实际调用 Highlights LLM：0 条（全部命中缓存）");
+    }
     return {
       scoredEntries: sortScoredEntries(mergedEntries),
       scoredCount: 0,
-      cacheHitCount
+      cacheHitCount,
+      requestedEntries: 0,
+      requestBatchCount: 0,
+      usage
     };
+  }
+
+  if (verbose) {
+    console.log(`       实际调用 Highlights LLM：1 批，共 ${pendingEntries.length} 条`);
   }
 
   let scored = [];
   try {
-    scored =
+    const result =
       config.provider === "minimax"
         ? await requestMiniMaxHighlightScores(pendingEntries, config)
         : await requestOpenAIHighlightScores(pendingEntries, config);
+    scored = result.scores;
+    mergeUsage(usage, result.usage);
   } catch (error) {
     if (verbose) {
-      console.log(`       Highlights 打分失败，已跳过未命中的 ${pendingEntries.length} 条: ${error.message}`);
+      console.log(`       Highlights 打分失败，已跳过未命中的 ${pendingEntries.length} 条：${error.message}`);
     }
     return {
       scoredEntries: sortScoredEntries([...mergedEntries, ...pendingEntries]),
       scoredCount: 0,
-      cacheHitCount
+      cacheHitCount,
+      requestedEntries: pendingEntries.length,
+      requestBatchCount: 1,
+      usage
     };
   }
 
@@ -138,7 +157,10 @@ export async function scoreHighlightCandidates(entries, { config, verbose = fals
   return {
     scoredEntries: sortScoredEntries(mergedEntries),
     scoredCount: normalizedScores.length,
-    cacheHitCount
+    cacheHitCount,
+    requestedEntries: pendingEntries.length,
+    requestBatchCount: 1,
+    usage
   };
 }
 
@@ -214,7 +236,10 @@ async function requestOpenAIHighlightScores(entries, config) {
   }
 
   const parsed = JSON.parse(text);
-  return parsed.scores ?? parsed.items ?? parsed;
+  return {
+    scores: parsed.scores ?? parsed.items ?? parsed,
+    usage: normalizeUsage("openai", payload?.usage)
+  };
 }
 
 async function requestMiniMaxHighlightScores(entries, config) {
@@ -253,7 +278,10 @@ async function requestMiniMaxHighlightScores(entries, config) {
   }
 
   const parsed = parseModelJson(content);
-  return parsed.scores ?? parsed.items ?? parsed;
+  return {
+    scores: parsed.scores ?? parsed.items ?? parsed,
+    usage: normalizeUsage("minimax", payload?.usage)
+  };
 }
 
 function mapCandidates(entries) {
@@ -405,6 +433,45 @@ function normalizeScore(value) {
     return 0;
   }
   return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function createEmptyUsage() {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0
+  };
+}
+
+function mergeUsage(target, usage) {
+  if (!usage) {
+    return target;
+  }
+
+  target.inputTokens += Number(usage.inputTokens ?? 0);
+  target.outputTokens += Number(usage.outputTokens ?? 0);
+  target.totalTokens += Number(usage.totalTokens ?? 0);
+  return target;
+}
+
+function normalizeUsage(provider, usage) {
+  if (!usage || typeof usage !== "object") {
+    return createEmptyUsage();
+  }
+
+  if (provider === "openai") {
+    return {
+      inputTokens: Number(usage.input_tokens ?? 0),
+      outputTokens: Number(usage.output_tokens ?? 0),
+      totalTokens: Number(usage.total_tokens ?? 0)
+    };
+  }
+
+  return {
+    inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0),
+    outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0),
+    totalTokens: Number(usage.total_tokens ?? 0)
+  };
 }
 
 function normalizeScoredItems(value) {

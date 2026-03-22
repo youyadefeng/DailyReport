@@ -1,4 +1,5 @@
 import { APP_CONFIG } from "../../config/project.config.mjs";
+import { prepareTranslationText } from "./text-utils.mjs";
 
 const OPENAI_DEFAULT_BASE_URL = APP_CONFIG.translation.openai.defaultBaseUrl;
 const OPENAI_DEFAULT_MODEL = APP_CONFIG.translation.openai.defaultModel;
@@ -48,16 +49,37 @@ export function getTranslationConfig() {
 export async function translateEntries(entries, { config, verbose = false, cache = null } = {}) {
   if (!config?.enabled || entries.length === 0) {
     return {
+      totalEntries: entries.length,
+      requestedEntries: 0,
+      requestBatchCount: 0,
+      missingContentSkippedCount: 0,
+      existingTranslationSkippedCount: 0,
+      failureCacheSkippedCount: 0,
       translatedCount: 0,
+      failedCount: 0,
       skippedCount: entries.length,
-      cacheHitCount: 0
+      cacheHitCount: 0,
+      usage: createEmptyUsage()
     };
   }
 
   let translatedCount = 0;
   let skippedCount = 0;
   let cacheHitCount = 0;
+  let requestedEntries = 0;
+  let requestBatchCount = 0;
+  let missingContentSkippedCount = 0;
+  let existingTranslationSkippedCount = 0;
+  let failureCacheSkippedCount = 0;
+  let failedCount = 0;
+  const usage = createEmptyUsage();
   const chunkSize = config.provider === "minimax" ? MINIMAX_TRANSLATION_CHUNK_SIZE : OPENAI_TRANSLATION_CHUNK_SIZE;
+
+  if (verbose) {
+    console.log(
+      `       翻译候选总数: ${entries.length} 条 | 每批 ${chunkSize} 条 | 提供方: ${config.provider} / ${config.model}`
+    );
+  }
 
   for (let index = 0; index < entries.length; index += chunkSize) {
     const chunk = entries.slice(index, index + chunkSize);
@@ -67,10 +89,20 @@ export async function translateEntries(entries, { config, verbose = false, cache
     for (const entry of chunk) {
       if (!entry.title || !entry.summary) {
         skippedCount += 1;
+        missingContentSkippedCount += 1;
         continue;
       }
+
       if (entry.titleZh && entry.summaryZh) {
         skippedCount += 1;
+        existingTranslationSkippedCount += 1;
+        continue;
+      }
+
+      const failedCached = cache?.getTranslationFailure?.(entry.id);
+      if (isCompatibleTranslationFailureCache(failedCached, config)) {
+        skippedCount += 1;
+        failureCacheSkippedCount += 1;
         continue;
       }
 
@@ -93,18 +125,34 @@ export async function translateEntries(entries, { config, verbose = false, cache
       continue;
     }
 
+    requestedEntries += pending.length;
+    requestBatchCount += 1;
+
     if (verbose) {
-      console.log(`       Translation batch ${chunkLabel}: ${pending.length} item(s)`);
+      console.log(
+        `       实际调用翻译 LLM：批次 ${requestBatchCount}（配置批次 ${chunkLabel}），本批 ${pending.length} 条，累计送审 ${requestedEntries} 条`
+      );
     }
 
     let translated = [];
     try {
-      translated =
+      const result =
         config.provider === "minimax"
           ? await requestMiniMaxTranslations(pending, config)
           : await requestOpenAITranslations(pending, config);
+      translated = result.translations;
+      mergeUsage(usage, result.usage);
     } catch (error) {
       skippedCount += pending.length;
+      failedCount += pending.length;
+      for (const entry of pending) {
+        cache?.setTranslationFailure?.(entry.id, {
+          provider: config.provider,
+          model: config.model,
+          reason: error.message,
+          failedAt: new Date().toISOString()
+        });
+      }
       if (verbose) {
         console.log(`       Translation batch failed: ${error.message}`);
       }
@@ -117,6 +165,13 @@ export async function translateEntries(entries, { config, verbose = false, cache
       const match = byId.get(entry.id);
       if (!match) {
         skippedCount += 1;
+        failedCount += 1;
+        cache?.setTranslationFailure?.(entry.id, {
+          provider: config.provider,
+          model: config.model,
+          reason: "missing_translation_result",
+          failedAt: new Date().toISOString()
+        });
         continue;
       }
 
@@ -125,6 +180,13 @@ export async function translateEntries(entries, { config, verbose = false, cache
 
       if (!titleZh || !summaryZh) {
         skippedCount += 1;
+        failedCount += 1;
+        cache?.setTranslationFailure?.(entry.id, {
+          provider: config.provider,
+          model: config.model,
+          reason: "missing_translation_fields",
+          failedAt: new Date().toISOString()
+        });
         continue;
       }
 
@@ -133,6 +195,7 @@ export async function translateEntries(entries, { config, verbose = false, cache
       entry.translationProvider = config.provider;
       entry.translationModel = config.model;
       entry.translatedAt = new Date().toISOString();
+      cache?.clearTranslationFailure?.(entry.id);
       cache?.setTranslation?.(entry.id, {
         titleZh,
         summaryZh,
@@ -145,9 +208,17 @@ export async function translateEntries(entries, { config, verbose = false, cache
   }
 
   return {
+    totalEntries: entries.length,
+    requestedEntries,
+    requestBatchCount,
+    missingContentSkippedCount,
+    existingTranslationSkippedCount,
+    failureCacheSkippedCount,
     translatedCount,
+    failedCount,
     skippedCount,
-    cacheHitCount
+    cacheHitCount,
+    usage
   };
 }
 
@@ -159,6 +230,10 @@ function isCompatibleTranslationCache(cached, config) {
       cached.titleZh &&
       cached.summaryZh
   );
+}
+
+function isCompatibleTranslationFailureCache(cached, config) {
+  return Boolean(cached && cached.provider === config.provider && cached.model === config.model);
 }
 
 async function requestOpenAITranslations(entries, config) {
@@ -177,8 +252,8 @@ async function requestOpenAITranslations(entries, config) {
           content: JSON.stringify({
             items: entries.map((entry) => ({
               id: entry.id,
-              title: entry.title,
-              summary: entry.summary
+              title: prepareTranslationText(entry.title, 240),
+              summary: prepareTranslationText(entry.summary, 520)
             }))
           })
         }
@@ -225,7 +300,10 @@ async function requestOpenAITranslations(entries, config) {
   }
 
   const parsed = parseModelJson(text);
-  return parsed.translations ?? [];
+  return {
+    translations: parsed.translations ?? [],
+    usage: normalizeUsage("openai", payload?.usage)
+  };
 }
 
 async function requestMiniMaxTranslations(entries, config) {
@@ -249,8 +327,8 @@ async function requestMiniMaxTranslations(entries, config) {
           content: JSON.stringify({
             translations: entries.map((entry) => ({
               id: entry.id,
-              title: entry.title,
-              summary: entry.summary
+              title: prepareTranslationText(entry.title, 240),
+              summary: prepareTranslationText(entry.summary, 520)
             }))
           })
         }
@@ -270,7 +348,49 @@ async function requestMiniMaxTranslations(entries, config) {
   }
 
   const parsed = parseModelJson(content);
-  return parsed.translations ?? [];
+  return {
+    translations: parsed.translations ?? [],
+    usage: normalizeUsage("minimax", payload?.usage)
+  };
+}
+
+function createEmptyUsage() {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0
+  };
+}
+
+function mergeUsage(target, usage) {
+  if (!usage) {
+    return target;
+  }
+
+  target.inputTokens += Number(usage.inputTokens ?? 0);
+  target.outputTokens += Number(usage.outputTokens ?? 0);
+  target.totalTokens += Number(usage.totalTokens ?? 0);
+  return target;
+}
+
+function normalizeUsage(provider, usage) {
+  if (!usage || typeof usage !== "object") {
+    return createEmptyUsage();
+  }
+
+  if (provider === "openai") {
+    return {
+      inputTokens: Number(usage.input_tokens ?? 0),
+      outputTokens: Number(usage.output_tokens ?? 0),
+      totalTokens: Number(usage.total_tokens ?? 0)
+    };
+  }
+
+  return {
+    inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0),
+    outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0),
+    totalTokens: Number(usage.total_tokens ?? 0)
+  };
 }
 
 function extractResponsesOutputText(payload) {

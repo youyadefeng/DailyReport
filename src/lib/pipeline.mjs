@@ -1,4 +1,4 @@
-﻿import { writeFile } from "node:fs/promises";
+﻿import { writeFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { readJson, writeJson, ensureDir } from "./fs-utils.mjs";
 import { parseGitHubSearchResponse } from "./github-api.mjs";
@@ -11,10 +11,13 @@ import { APP_CONFIG } from "../../config/project.config.mjs";
 import {
   getCachedHighlight,
   getCachedTranslation,
+  getCachedTranslationFailure,
   loadLlmCache,
   saveLlmCache,
   setCachedHighlight,
-  setCachedTranslation
+  setCachedTranslation,
+  setCachedTranslationFailure,
+  clearCachedTranslationFailure
 } from "./llm-cache.mjs";
 import {
   getHighlightScoringConfig,
@@ -24,10 +27,11 @@ import {
 import { getTranslationConfig, translateEntries } from "./translator.mjs";
 
 const SOURCES_PATH = APP_CONFIG.paths.sources;
-const STORE_PATH = APP_CONFIG.paths.store;
+const STORE_DIR = APP_CONFIG.paths.storeDir;
+const STORE_LEGACY_FILE = APP_CONFIG.paths.storeLegacyFile;
 const REPORTS_DIR = APP_CONFIG.paths.reportsDir;
 const MAX_FETCH_ATTEMPTS = APP_CONFIG.pipeline.maxFetchAttempts;
-const NON_GITHUB_HIGHLIGHT_LIMIT = 10;
+const NON_GITHUB_HIGHLIGHT_LIMIT = 20;
 const GITHUB_HIGHLIGHT_LIMIT = 10;
 const ANSI = {
   reset: "\u001b[0m",
@@ -55,11 +59,59 @@ export async function loadSourceStatus() {
 }
 
 export async function loadStore() {
-  return readJson(STORE_PATH, { entries: [] });
+  await ensureDir(STORE_DIR);
+  const files = await readdir(STORE_DIR, { withFileTypes: true }).catch(() => []);
+  const dayFiles = files
+    .filter((file) => file.isFile() && /^\d{4}-\d{2}-\d{2}\.json$/.test(file.name))
+    .map((file) => file.name)
+    .sort();
+
+  if (dayFiles.length === 0) {
+    const legacy = await readJson(STORE_LEGACY_FILE, null);
+    if (!legacy || !Array.isArray(legacy.entries)) {
+      return { entries: [] };
+    }
+
+    await saveStore(legacy);
+    await rm(STORE_LEGACY_FILE, { force: true });
+    return legacy;
+  }
+
+  const entries = [];
+  let updatedAt = null;
+
+  for (const fileName of dayFiles) {
+    const payload = await readJson(path.join(STORE_DIR, fileName), null);
+    if (!payload || !Array.isArray(payload.entries)) {
+      continue;
+    }
+    entries.push(...payload.entries);
+    if (payload.updatedAt && (!updatedAt || payload.updatedAt > updatedAt)) {
+      updatedAt = payload.updatedAt;
+    }
+  }
+
+  return { updatedAt, entries };
 }
 
 export async function saveStore(store) {
-  await writeJson(STORE_PATH, store);
+  await ensureDir(STORE_DIR);
+  const byDay = new Map();
+
+  for (const entry of store.entries ?? []) {
+    const day = String(entry.fetchedAt || "").slice(0, 10) || slugDate();
+    const bucket = byDay.get(day) ?? [];
+    bucket.push(entry);
+    byDay.set(day, bucket);
+  }
+
+  for (const [day, entries] of byDay.entries()) {
+    await writeJson(path.join(STORE_DIR, `${day}.json`), {
+      updatedAt: store.updatedAt,
+      date: day,
+      entries
+    });
+  }
 }
 
 export async function fetchSource(source) {
@@ -261,6 +313,22 @@ function summarizeGithubHighlights(entries) {
   };
 }
 
+function summarizeGithubSourceHighlights(sourceName, entries) {
+  if (entries.length === 0) {
+    return {
+      headline: `今天没有来自 ${sourceName} 的重点项目。`,
+      stats: ""
+    };
+  }
+
+  const topCategories = collectTopLabels(entries.map((entry) => entry.category));
+  const totalPopularity = entries.reduce((sum, entry) => sum + getGitHubPopularityScore(entry), 0);
+  return {
+    headline: `${sourceName} 今日热点以 ${topCategories} 为主。`,
+    stats: `共选出 ${entries.length} 个项目，合计热度分 ${totalPopularity}。`
+  };
+}
+
 function collectTopLabels(values, maxCount = 2) {
   const counts = new Map();
   for (const value of values) {
@@ -280,7 +348,10 @@ function collectTopLabels(values, maxCount = 2) {
 
 function appendNonGithubHighlight(lines, entry, index) {
   lines.push(`${index}. **[${entry.titleZh ?? entry.title}](${entry.url})**`);
-  lines.push(`   来源：${entry.source} | 分类：${entry.category} | 规则分：${entry.score}`);
+  lines.push(
+    `   来源：${entry.source} | 分类：${entry.category} | 发布时间：${formatEntryDisplayTime(entry)}`
+  );
+  lines.push(`   评分：最终 ${getEntryDisplayScore(entry)} | 规则 ${entry.score ?? 0} | LLM ${Number(entry.llmScore ?? 0)}`);
   lines.push(`   核心摘要：${entry.highlightSummaryZh ?? entry.summaryZh ?? entry.summary}`);
   if (entry.highlightReasonZh) {
     lines.push(`   为什么重要：${entry.highlightReasonZh}`);
@@ -294,7 +365,7 @@ function appendNonGithubHighlight(lines, entry, index) {
 function appendGithubHighlight(lines, entry, index) {
   lines.push(`${index}. **[${entry.titleZh ?? entry.title}](${entry.url})**`);
   lines.push(
-    `   分类：${entry.category} | 热度分：${getGitHubPopularityScore(entry)} | 来源：${entry.source}`
+    `   分类：${entry.category} | 热度分：${getGitHubPopularityScore(entry)} | 来源：${entry.source} | 最近更新：${entry.github?.updatedAtCn ?? formatEntryDisplayTime(entry)}`
   );
   if (entry.github) {
     lines.push(
@@ -306,6 +377,109 @@ function appendGithubHighlight(lines, entry, index) {
     lines.push(`   原文标题：${entry.title}`);
   }
   lines.push("");
+}
+
+function groupEntriesBySource(entries) {
+  const groups = new Map();
+
+  for (const entry of entries) {
+    const bucket = groups.get(entry.source) ?? [];
+    bucket.push(entry);
+    groups.set(entry.source, bucket);
+  }
+
+  return [...groups.entries()]
+    .map(([source, sourceEntries]) => [source, sourceEntries.slice().sort(compareSourceEntries)])
+    .sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]));
+}
+
+function compareSourceEntries(left, right) {
+  if (isGitHubEntry(left) || isGitHubEntry(right)) {
+    const githubOrder = compareGitHubEntries(left, right);
+    if (githubOrder !== 0) {
+      return githubOrder;
+    }
+  } else {
+    const scoreDiff = getEntryDisplayScore(right) - getEntryDisplayScore(left);
+    if (scoreDiff !== 0) {
+      return scoreDiff;
+    }
+  }
+
+  const leftTime = left.publishedAt || left.fetchedAt || "";
+  const rightTime = right.publishedAt || right.fetchedAt || "";
+  return rightTime.localeCompare(leftTime);
+}
+
+function getEntryDisplayScore(entry) {
+  return Number(entry.blendedScore ?? entry.llmScore ?? entry.score ?? 0);
+}
+
+function slugifySourceName(value) {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "source";
+}
+
+function formatEntryDisplayTime(entry) {
+  return formatBeijingTime(entry.publishedAt ?? entry.fetchedAt ?? "") || "unknown";
+}
+
+async function writeSourceReports(sourceGroups, { reportDir, dateSlug }) {
+  const sourceDir = path.join(reportDir, "sources");
+  await ensureDir(sourceDir);
+  const sourceReports = [];
+
+  for (const [source, sourceEntries] of sourceGroups) {
+    const fileName = `${slugifySourceName(source)}.md`;
+    const filePath = path.join(sourceDir, fileName);
+    const relativePath = path.posix.join("sources", fileName);
+    const latestEntry = sourceEntries[0];
+    const lines = [
+      `# ${source} - ${dateSlug}`,
+      "",
+      `- 条目数: ${sourceEntries.length}`,
+      `- 最新时间: ${latestEntry ? formatEntryDisplayTime(latestEntry) : "unknown"}`,
+      "",
+      "## 条目明细",
+      ""
+    ];
+
+    for (const entry of sourceEntries) {
+      lines.push(`### [${entry.titleZh ?? entry.title}](${entry.url})`);
+      lines.push(`- 发布时间: ${formatEntryDisplayTime(entry)}`);
+      lines.push(`- 分类: ${entry.category}`);
+      lines.push(`- 标签: ${entry.tags.join(", ") || "none"}`);
+      if (isGitHubEntry(entry) && entry.github) {
+        lines.push(`- 热度分: ${getGitHubPopularityScore(entry)}`);
+        lines.push(
+          `- 关键指标: Stars ${entry.github.stars ?? "unknown"} | Forks ${entry.github.forks ?? "unknown"} | Watchers ${entry.github.watchers ?? "unknown"} | Contributors ${entry.github.contributors ?? "unknown"}`
+        );
+        lines.push(`- 最近更新: ${entry.github.updatedAtCn ?? entry.github.updatedAt ?? "unknown"}`);
+      } else {
+        lines.push(`- 评分: 最终 ${getEntryDisplayScore(entry)} | 规则 ${entry.score ?? 0} | LLM ${Number(entry.llmScore ?? 0)}`);
+      }
+      lines.push(`- 摘要: ${entry.summaryZh ?? entry.summary}`);
+      if (entry.titleZh) {
+        lines.push(`- 原文标题: ${entry.title}`);
+      }
+      lines.push("");
+    }
+
+    await writeFile(filePath, `${lines.join("\n")}\n`, "utf8");
+    sourceReports.push({
+      source,
+      path: filePath,
+      relativePath,
+      count: sourceEntries.length,
+      latestTime: latestEntry ? formatEntryDisplayTime(latestEntry) : "unknown",
+      isGitHub: sourceEntries.some((entry) => isGitHubEntry(entry))
+    });
+  }
+
+  return sourceReports;
 }
 
 export async function runPipeline({ verbose = false, sourceFilters = [], tagFilters = [] } = {}) {
@@ -329,8 +503,18 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
   let translatedCount = 0;
   let translationSkippedCount = 0;
   let translationCacheHitCount = 0;
+  let translationRequestedCount = 0;
+  let translationRequestBatchCount = 0;
+  let translationExistingFieldSkipCount = 0;
+  let translationMissingContentSkipCount = 0;
+  let translationFailureCacheSkipCount = 0;
+  let translationFailedCount = 0;
+  let translationUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let llmHighlightScoredCount = 0;
   let llmHighlightCacheHitCount = 0;
+  let llmHighlightRequestedCount = 0;
+  let llmHighlightRequestBatchCount = 0;
+  let llmHighlightUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
 
   if (sources.length === 0) {
     throw new Error("No sources matched the requested filters.");
@@ -442,12 +626,22 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
       verbose,
       cache: {
         getTranslation: (entryId) => getCachedTranslation(llmCache, entryId),
-        setTranslation: (entryId, value) => setCachedTranslation(llmCache, entryId, value)
+        setTranslation: (entryId, value) => setCachedTranslation(llmCache, entryId, value),
+        getTranslationFailure: (entryId) => getCachedTranslationFailure(llmCache, entryId),
+        setTranslationFailure: (entryId, value) => setCachedTranslationFailure(llmCache, entryId, value),
+        clearTranslationFailure: (entryId) => clearCachedTranslationFailure(llmCache, entryId)
       }
     });
     translatedCount = translationResult.translatedCount;
     translationSkippedCount = translationResult.skippedCount;
     translationCacheHitCount = translationResult.cacheHitCount;
+    translationRequestedCount = translationResult.requestedEntries;
+    translationRequestBatchCount = translationResult.requestBatchCount;
+    translationExistingFieldSkipCount = translationResult.existingTranslationSkippedCount;
+    translationMissingContentSkipCount = translationResult.missingContentSkippedCount;
+    translationFailureCacheSkipCount = translationResult.failureCacheSkippedCount;
+    translationFailedCount = translationResult.failedCount;
+    translationUsage = translationResult.usage;
     if (verbose) {
       console.log(
         colorize(
@@ -455,8 +649,49 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
           translatedCount > 0 ? "green" : "dim"
         )
       );
+      console.log(
+        colorize(
+          `[3/4] \u5b9e\u9645\u8c03\u7528\u7ffb\u8bd1 LLM: ${translationRequestedCount} \u6761\uff0c${translationRequestBatchCount} \u6279`,
+          translationRequestedCount > 0 ? "green" : "dim"
+        )
+      );
+      if (translationExistingFieldSkipCount > 0) {
+        console.log(
+          colorize(
+            `[3/4] \u5df2\u6709\u4e2d\u6587\u5b57\u6bb5\u76f4\u63a5\u8df3\u8fc7: ${translationExistingFieldSkipCount} \u6761`,
+            "dim"
+          )
+        );
+      }
       if (translationCacheHitCount > 0) {
         console.log(colorize(`[3/4] \u7ffb\u8bd1\u7f13\u5b58\u547d\u4e2d: ${translationCacheHitCount} \u6761`, "green"));
+      }
+      if (translationFailureCacheSkipCount > 0) {
+        console.log(
+          colorize(
+            `[3/4] 当天翻译失败缓存跳过: ${translationFailureCacheSkipCount} 条`,
+            "yellow"
+          )
+        );
+      }
+      if (translationMissingContentSkipCount > 0) {
+        console.log(
+          colorize(
+            `[3/4] \u7f3a\u5c11\u6807\u9898\u6216\u6458\u8981\u8df3\u8fc7: ${translationMissingContentSkipCount} \u6761`,
+            "yellow"
+          )
+        );
+      }
+      if (translationFailedCount > 0) {
+        console.log(colorize(`[3/4] 本轮翻译失败: ${translationFailedCount} 条`, "yellow"));
+      }
+      if (translationUsage.totalTokens > 0) {
+        console.log(
+          colorize(
+            `[3/4] \u7ffb\u8bd1 Token \u6d88\u8017: \u8f93\u5165 ${translationUsage.inputTokens} | \u8f93\u51fa ${translationUsage.outputTokens} | \u5408\u8ba1 ${translationUsage.totalTokens}`,
+            "dim"
+          )
+        );
       }
     }
   }
@@ -488,6 +723,9 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
   });
   llmHighlightScoredCount = reportOutput.llmHighlightScoredCount;
   llmHighlightCacheHitCount = reportOutput.llmHighlightCacheHitCount;
+  llmHighlightRequestedCount = reportOutput.llmHighlightRequestedCount;
+  llmHighlightRequestBatchCount = reportOutput.llmHighlightRequestBatchCount;
+  llmHighlightUsage = reportOutput.llmHighlightUsage;
   await saveLlmCache(llmCache);
 
   if (verbose) {
@@ -521,6 +759,22 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     if (llmHighlightCacheHitCount > 0) {
       console.log(colorize(`[4/4] Highlights \u7f13\u5b58\u547d\u4e2d: ${llmHighlightCacheHitCount} \u6761`, "green"));
     }
+    if (highlightScoringConfig.enabled) {
+      console.log(
+        colorize(
+          `[4/4] \u5b9e\u9645\u8c03\u7528 Highlights LLM: ${llmHighlightRequestedCount} \u6761\uff0c${llmHighlightRequestBatchCount} \u6279`,
+          llmHighlightRequestedCount > 0 ? "green" : "dim"
+        )
+      );
+      if (llmHighlightUsage.totalTokens > 0) {
+        console.log(
+          colorize(
+            `[4/4] Highlights Token \u6d88\u8017: \u8f93\u5165 ${llmHighlightUsage.inputTokens} | \u8f93\u51fa ${llmHighlightUsage.outputTokens} | \u5408\u8ba1 ${llmHighlightUsage.totalTokens}`,
+            "dim"
+          )
+        );
+      }
+    }
     console.log(colorize(`\u603b\u8017\u65f6: ${formatDuration(Date.now() - startedAtMs)}`, "bold"));
   }
 
@@ -539,10 +793,20 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     translatedEntries: translatedCount,
     translationSkippedEntries: translationSkippedCount,
     translationCacheHits: translationCacheHitCount,
+    translationRequestedEntries: translationRequestedCount,
+    translationRequestBatchCount,
+    translationExistingFieldSkips: translationExistingFieldSkipCount,
+    translationMissingContentSkips: translationMissingContentSkipCount,
+    translationFailureCacheSkips: translationFailureCacheSkipCount,
+    translationFailedEntries: translationFailedCount,
+    translationUsage,
     llmHighlightScoringEnabled: highlightScoringConfig.enabled,
     llmHighlightModel: highlightScoringConfig.enabled ? highlightScoringConfig.model : null,
     llmHighlightScoredCount,
     llmHighlightCacheHits: llmHighlightCacheHitCount,
+    llmHighlightRequestedEntries: llmHighlightRequestedCount,
+    llmHighlightRequestBatchCount,
+    llmHighlightUsage,
     failures,
     reportPath: reportOutput.reportPath,
     reportHighlights: reportOutput.nonGithubTopEntries,
@@ -658,12 +922,13 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   await ensureDir(REPORTS_DIR);
   const dateSlug = slugDate();
   const reportId = slugHour();
-  const dailyReportsDir = path.join(REPORTS_DIR, dateSlug);
-  await ensureDir(dailyReportsDir);
-  const reportPath = path.join(dailyReportsDir, `${reportId}.md`);
+  const reportDir = path.join(REPORTS_DIR, reportId);
+  await ensureDir(reportDir);
+  const reportPath = path.join(reportDir, "overview.md");
   const recentEntries = entries.filter((entry) => (entry.fetchedAt || "").startsWith(dateSlug));
   const nonGithubEntries = recentEntries.filter((entry) => !isGitHubEntry(entry));
   const githubEntries = recentEntries.filter((entry) => isGitHubEntry(entry));
+  const sourceGroups = groupEntriesBySource(recentEntries);
   const nonGithubHighlightCandidates = pickHighlightCandidates(nonGithubEntries, Math.max(NON_GITHUB_HIGHLIGHT_LIMIT, 10));
   const scoredNonGithubHighlights = await scoreHighlightCandidates(nonGithubHighlightCandidates, {
     config: options.highlightScoringConfig,
@@ -671,8 +936,18 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     cache: options.highlightCache
   });
   const nonGithubTopEntries = scoredNonGithubHighlights.scoredEntries.slice(0, NON_GITHUB_HIGHLIGHT_LIMIT);
-  const githubTopEntries = githubEntries.slice().sort(compareGitHubEntries).slice(0, GITHUB_HIGHLIGHT_LIMIT);
-  const groupedEntries = groupBySection(recentEntries);
+  const githubRisingTopEntries = githubEntries
+    .filter((entry) => entry.source === "GitHub Rising AI")
+    .slice()
+    .sort(compareGitHubEntries)
+    .slice(0, GITHUB_HIGHLIGHT_LIMIT);
+  const githubTopicTopEntries = githubEntries
+    .filter((entry) => entry.source === "GitHub AI Topic")
+    .slice()
+    .sort(compareGitHubEntries)
+    .slice(0, GITHUB_HIGHLIGHT_LIMIT);
+  const githubTopEntries = [...githubRisingTopEntries, ...githubTopicTopEntries];
+  const sourceReports = await writeSourceReports(sourceGroups, { reportDir, dateSlug });
 
   const lines = [
     `# AI 日报 - ${dateSlug}`,
@@ -685,12 +960,13 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     ""
   ];
 
-  if (nonGithubTopEntries.length === 0 && githubTopEntries.length === 0) {
+  if (nonGithubTopEntries.length === 0 && githubRisingTopEntries.length === 0 && githubTopicTopEntries.length === 0) {
     lines.push("今天没有采集到新条目。");
     lines.push("");
   } else {
     const nonGithubSummary = summarizeNonGithubHighlights(nonGithubTopEntries);
-    const githubSummary = summarizeGithubHighlights(githubTopEntries);
+    const githubRisingSummary = summarizeGithubSourceHighlights("GitHub Rising AI", githubRisingTopEntries);
+    const githubTopicSummary = summarizeGithubSourceHighlights("GitHub AI Topic", githubTopicTopEntries);
 
     lines.push(`### 非 GitHub 来源 Top ${NON_GITHUB_HIGHLIGHT_LIMIT}`);
     lines.push("");
@@ -706,48 +982,46 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
       }
     }
 
-    lines.push(`### GitHub 来源 Top ${GITHUB_HIGHLIGHT_LIMIT}`);
+    lines.push(`### GitHub Rising AI Top ${GITHUB_HIGHLIGHT_LIMIT}`);
     lines.push("");
-    lines.push(githubSummary.headline);
-    if (githubSummary.stats) {
-      lines.push(githubSummary.stats);
+    lines.push(githubRisingSummary.headline);
+    if (githubRisingSummary.stats) {
+      lines.push(githubRisingSummary.stats);
     }
     lines.push("");
-    if (githubTopEntries.length === 0) {
+    if (githubRisingTopEntries.length === 0) {
     } else {
-      for (const [index, entry] of githubTopEntries.entries()) {
+      for (const [index, entry] of githubRisingTopEntries.entries()) {
+        appendGithubHighlight(lines, entry, index + 1);
+      }
+    }
+
+    lines.push(`### GitHub AI Topic Top ${GITHUB_HIGHLIGHT_LIMIT}`);
+    lines.push("");
+    lines.push(githubTopicSummary.headline);
+    if (githubTopicSummary.stats) {
+      lines.push(githubTopicSummary.stats);
+    }
+    lines.push("");
+    if (githubTopicTopEntries.length === 0) {
+    } else {
+      for (const [index, entry] of githubTopicTopEntries.entries()) {
         appendGithubHighlight(lines, entry, index + 1);
       }
     }
   }
 
-  for (const [section, sectionEntries] of groupedEntries) {
-    lines.push(`## ${section}`);
+  lines.push("## 来源概览");
+  lines.push("");
+  if (sourceReports.length === 0) {
+    lines.push("今天没有来源明细。");
     lines.push("");
-    for (const entry of sectionEntries) {
-      lines.push(`### [${entry.titleZh ?? entry.title}](${entry.url})`);
-      lines.push(`- 来源: ${entry.source}`);
-      lines.push(`- 发布时间: ${entry.publishedAt ?? "unknown"}`);
-      lines.push(`- 标签: ${entry.tags.join(", ") || "none"}`);
-      if (section === "GitHub / Open Source") {
-        lines.push(`- 分类: ${entry.category}`);
-        if (entry.github) {
-          lines.push(`- 热度分: ${getGitHubPopularityScore(entry)}`);
-          lines.push(`- Stars: ${entry.github.stars ?? "unknown"}`);
-          lines.push(`- Watchers: ${entry.github.watchers ?? "unknown"}`);
-          lines.push(`- Forks: ${entry.github.forks ?? "unknown"}`);
-          lines.push(`- Open Issues: ${entry.github.openIssues ?? "unknown"}`);
-          lines.push(`- Contributors: ${entry.github.contributors ?? "unknown"}`);
-          lines.push(`- 最近更新: ${entry.github.updatedAtCn ?? entry.github.updatedAt ?? entry.publishedAt ?? "unknown"}`);
-          if (entry.github.language) {
-            lines.push(`- 主要语言: ${entry.github.language}`);
-          }
-        }
-      }
-      lines.push(`- 摘要: ${entry.summaryZh ?? entry.summary}`);
-      if (entry.titleZh) {
-        lines.push(`- 原文标题: ${entry.title}`);
-      }
+  } else {
+    for (const sourceReport of sourceReports) {
+      lines.push(`### [${sourceReport.source}](${sourceReport.relativePath})`);
+      lines.push(`- 条目数: ${sourceReport.count}`);
+      lines.push(`- 最新时间: ${sourceReport.latestTime}`);
+      lines.push(`- 类型: ${sourceReport.isGitHub ? "GitHub / Open Source" : "资讯源"}`);
       lines.push("");
     }
   }
@@ -766,10 +1040,14 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   await writeFile(reportPath, `${lines.join("\n")}\n`, "utf8");
   return {
     reportPath,
+    sourceReports,
     nonGithubTopEntries,
     githubTopEntries,
     llmHighlightScoredCount: scoredNonGithubHighlights.scoredCount,
-    llmHighlightCacheHitCount: scoredNonGithubHighlights.cacheHitCount
+    llmHighlightCacheHitCount: scoredNonGithubHighlights.cacheHitCount,
+    llmHighlightRequestedCount: scoredNonGithubHighlights.requestedEntries,
+    llmHighlightRequestBatchCount: scoredNonGithubHighlights.requestBatchCount,
+    llmHighlightUsage: scoredNonGithubHighlights.usage
   };
 }
 

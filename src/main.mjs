@@ -27,11 +27,27 @@ try {
   if (result.translationEnabled) {
     console.log(`\u5df2\u7ffb\u8bd1\u6761\u6570: ${result.translatedEntries}`);
     console.log(`\u8df3\u8fc7\u7ffb\u8bd1\u6761\u6570: ${result.translationSkippedEntries}`);
+    console.log(`\u5b9e\u9645\u8c03\u7528\u7ffb\u8bd1 LLM \u6761\u6570: ${result.translationRequestedEntries}`);
+    console.log(`\u5b9e\u9645\u8c03\u7528\u7ffb\u8bd1 LLM \u6279\u6b21: ${result.translationRequestBatchCount}`);
+    console.log(`\u5df2\u6709\u4e2d\u6587\u5b57\u6bb5\u8df3\u8fc7: ${result.translationExistingFieldSkips}`);
     console.log(`\u7ffb\u8bd1\u7f13\u5b58\u547d\u4e2d: ${result.translationCacheHits}`);
+    console.log(`\u5f53\u5929\u7ffb\u8bd1\u5931\u8d25\u7f13\u5b58\u8df3\u8fc7: ${result.translationFailureCacheSkips}`);
+    console.log(`\u672c\u8f6e\u7ffb\u8bd1\u5931\u8d25: ${result.translationFailedEntries}`);
+    console.log(
+      `\u7ffb\u8bd1 Token \u6d88\u8017: \u8f93\u5165 ${result.translationUsage.inputTokens} | \u8f93\u51fa ${result.translationUsage.outputTokens} | \u5408\u8ba1 ${result.translationUsage.totalTokens}`
+    );
+    if (result.translationMissingContentSkips > 0) {
+      console.log(`\u7f3a\u5c11\u6807\u9898\u6216\u6458\u8981\u8df3\u8fc7: ${result.translationMissingContentSkips}`);
+    }
   }
   if (result.llmHighlightScoringEnabled) {
     console.log(`LLM\u6253\u5206\u5019\u9009\u6570: ${result.llmHighlightScoredCount}`);
     console.log(`Highlights \u7f13\u5b58\u547d\u4e2d: ${result.llmHighlightCacheHits}`);
+    console.log(`\u5b9e\u9645\u8c03\u7528 Highlights LLM \u6761\u6570: ${result.llmHighlightRequestedEntries}`);
+    console.log(`\u5b9e\u9645\u8c03\u7528 Highlights LLM \u6279\u6b21: ${result.llmHighlightRequestBatchCount}`);
+    console.log(
+      `Highlights Token \u6d88\u8017: \u8f93\u5165 ${result.llmHighlightUsage.inputTokens} | \u8f93\u51fa ${result.llmHighlightUsage.outputTokens} | \u5408\u8ba1 ${result.llmHighlightUsage.totalTokens}`
+    );
   }
   if (result.createdEntryPreview.length > 0) {
     console.log("\u65b0\u589e\u6761\u76ee\u9884\u89c8:");

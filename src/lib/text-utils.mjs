@@ -53,6 +53,23 @@ export function sanitizeFeedNoise(text) {
     .trim();
 }
 
+export function prepareTranslationText(text, maxLength = 600) {
+  const normalized = sanitizeFeedNoise(stripHtml(decodeHtmlEntities(String(text ?? ""))))
+    .replace(/\s+/g, " ")
+    .replace(/[ \t]+([,.;:!?])/g, "$1")
+    .trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
 export function categorizeText(...values) {
   const corpus = values.join(" ").toLowerCase();
   for (const rule of CATEGORY_RULES) {

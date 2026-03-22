@@ -15,8 +15,10 @@ export const APP_CONFIG = {
     rootDir: ROOT_DIR,
     // 主信息源列表，管线会从这里读取要抓哪些源。
     sources: path.join(ROOT_DIR, "config", "sources.json"),
-    // 本地条目数据库，保存累计抓到的所有内容。
-    store: path.join(ROOT_DIR, "data", "entries.json"),
+    // 本地条目库存目录，按天保存累计抓到的所有内容。
+    storeDir: path.join(ROOT_DIR, "data", "entries"),
+    // 旧版单文件库存，用于兼容迁移。
+    storeLegacyFile: path.join(ROOT_DIR, "data", "entries.json"),
     // Markdown 日报输出目录。
     reportsDir: path.join(ROOT_DIR, "reports"),
     // 当天翻译/Highlights 打分缓存，用来减少重复调用大模型。
@@ -51,7 +53,7 @@ export const APP_CONFIG = {
   cache: {
     // 本地 LLM 缓存保留多少天。
     // 也可以在 .env.local 里用 LLM_CACHE_RETENTION_DAYS 覆盖。
-    retentionDays: getEnvNumber("LLM_CACHE_RETENTION_DAYS", 7)
+    retentionDays: getEnvNumber("LLM_CACHE_RETENTION_DAYS", 30)
   },
 
   // 翻译步骤相关设置。
@@ -59,8 +61,8 @@ export const APP_CONFIG = {
     chunkSize: {
       // OpenAI 通常可以一次处理多条。
       openai: 8,
-      // MiniMax 目前单条翻译更稳，所以默认 1 条一批。
-      minimax: 1
+      // MiniMax 目前按 2 条一批，兼顾速度和 JSON 稳定性。
+      minimax: 2
     },
     openai: {
       // 使用 OpenAI 翻译时的默认 API 地址。
