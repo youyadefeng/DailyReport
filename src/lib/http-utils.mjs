@@ -1,8 +1,9 @@
 import http from "node:http";
 import https from "node:https";
+import { APP_CONFIG } from "../../config/project.config.mjs";
 
-const DEFAULT_TIMEOUT_MS = 30000;
-const DEFAULT_MAX_REDIRECTS = 5;
+const DEFAULT_TIMEOUT_MS = APP_CONFIG.network.defaultTimeoutMs;
+const DEFAULT_MAX_REDIRECTS = APP_CONFIG.network.defaultMaxRedirects;
 
 export function fetchText(url, options = {}) {
   const {

@@ -1,8 +1,10 @@
-const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
-const MINIMAX_DEFAULT_BASE_URL = "https://api.minimax.io/v1";
-const MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7-highspeed";
-const MAX_CANDIDATES = 10;
+import { APP_CONFIG } from "../../config/project.config.mjs";
+
+const OPENAI_DEFAULT_BASE_URL = APP_CONFIG.highlights.openai.defaultBaseUrl;
+const OPENAI_DEFAULT_MODEL = APP_CONFIG.highlights.openai.defaultModel;
+const MINIMAX_DEFAULT_BASE_URL = APP_CONFIG.highlights.minimax.defaultBaseUrl;
+const MINIMAX_DEFAULT_MODEL = APP_CONFIG.highlights.minimax.defaultModel;
+const MAX_CANDIDATES = APP_CONFIG.highlights.maxCandidates;
 
 const HIGHLIGHT_SYSTEM_PROMPT =
   "You are ranking AI news items for a daily intelligence brief. " +
@@ -51,52 +53,92 @@ export function pickHighlightCandidates(entries, maxCandidates = MAX_CANDIDATES)
     .slice(0, maxCandidates);
 }
 
-export async function scoreHighlightCandidates(entries, { config, verbose = false } = {}) {
+export async function scoreHighlightCandidates(entries, { config, verbose = false, cache = null } = {}) {
   if (!config?.enabled || entries.length === 0) {
     return {
       scoredEntries: entries,
-      scoredCount: 0
+      scoredCount: 0,
+      cacheHitCount: 0
     };
+  }
+
+  const mergedEntries = [];
+  const pendingEntries = [];
+  let cacheHitCount = 0;
+
+  for (const entry of entries) {
+    const cached = cache?.getHighlight?.(entry.id);
+    if (isCompatibleCache(cached, config)) {
+      mergedEntries.push(mergeHighlightScore(entry, cached));
+      cacheHitCount += 1;
+      continue;
+    }
+    pendingEntries.push(entry);
   }
 
   if (verbose) {
     console.log(`       LLM 候选评分: ${entries.length} 条 (${config.provider} / ${config.model})`);
+    if (cacheHitCount > 0) {
+      console.log(`       Highlights 缓存命中: ${cacheHitCount} 条`);
+    }
   }
 
-  const scored =
-    config.provider === "minimax"
-      ? await requestMiniMaxHighlightScores(entries, config)
-      : await requestOpenAIHighlightScores(entries, config);
+  if (pendingEntries.length === 0) {
+    return {
+      scoredEntries: sortScoredEntries(mergedEntries),
+      scoredCount: 0,
+      cacheHitCount
+    };
+  }
+
+  let scored = [];
+  try {
+    scored =
+      config.provider === "minimax"
+        ? await requestMiniMaxHighlightScores(pendingEntries, config)
+        : await requestOpenAIHighlightScores(pendingEntries, config);
+  } catch (error) {
+    if (verbose) {
+      console.log(`       Highlights 打分失败，已跳过未命中的 ${pendingEntries.length} 条: ${error.message}`);
+    }
+    return {
+      scoredEntries: sortScoredEntries([...mergedEntries, ...pendingEntries]),
+      scoredCount: 0,
+      cacheHitCount
+    };
+  }
 
   const normalizedScores = normalizeScoredItems(scored);
   const byId = new Map(normalizedScores.map((item) => [item.id, item]));
-  const merged = entries.map((entry) => {
+
+  for (const entry of pendingEntries) {
     const llm = byId.get(entry.id);
     if (!llm) {
-      return entry;
+      mergedEntries.push(entry);
+      continue;
     }
 
-    const llmScore = normalizeScore(llm.overall_score);
-    const blendedScore = Math.round(entry.score * 0.4 + llmScore * 0.6);
-
-    return {
-      ...entry,
-      llmScore,
-      blendedScore,
-      highlightReasonZh: llm.reason_zh || llm.reason || entry.highlightReasonZh,
-      highlightSummaryZh: llm.highlight_summary_zh || llm.highlight_summary || entry.highlightSummaryZh,
-      llmDimensions: {
-        importance: llm.importance ?? null,
-        novelty: llm.novelty ?? null,
-        aiRelevance: llm.ai_relevance ?? null,
-        credibility: llm.credibility ?? null
-      }
-    };
-  });
+    const merged = mergeHighlightScore(entry, llm);
+    mergedEntries.push(merged);
+    cache?.setHighlight?.(entry.id, {
+      id: entry.id,
+      provider: config.provider,
+      model: config.model,
+      overall_score: llm.overall_score,
+      reason_zh: llm.reason_zh || llm.reason || "",
+      highlight_summary_zh: llm.highlight_summary_zh || llm.highlight_summary || "",
+      importance: llm.importance ?? null,
+      novelty: llm.novelty ?? null,
+      ai_relevance: llm.ai_relevance ?? null,
+      credibility: llm.credibility ?? null,
+      scoredAt: new Date().toISOString()
+    });
+  }
 
   return {
-    scoredEntries: merged.sort((left, right) => (right.blendedScore ?? right.score) - (left.blendedScore ?? left.score)),
-    scoredCount: normalizedScores.length
+    scoredEntries: sortScoredEntries(mergedEntries),
+    scoredCount: normalizedScores.length,
+    cacheHitCount
   };
 }
 
@@ -210,7 +252,7 @@ async function requestMiniMaxHighlightScores(entries, config) {
     throw new Error("MiniMax highlight scoring response did not include message content.");
   }
 
-  const parsed = JSON.parse(extractJsonObject(content));
+  const parsed = parseModelJson(content);
   return parsed.scores ?? parsed.items ?? parsed;
 }
 
@@ -226,6 +268,40 @@ function mapCandidates(entries) {
     rule_score: entry.score,
     published_at: entry.publishedAt
   }));
+}
+
+function mergeHighlightScore(entry, llm) {
+  const llmScore = normalizeScore(llm.overall_score);
+  const blendedScore = Math.round(entry.score * 0.4 + llmScore * 0.6);
+
+  return {
+    ...entry,
+    llmScore,
+    blendedScore,
+    highlightReasonZh: llm.reason_zh || llm.reason || entry.highlightReasonZh,
+    highlightSummaryZh: llm.highlight_summary_zh || llm.highlight_summary || entry.highlightSummaryZh,
+    llmDimensions: {
+      importance: llm.importance ?? null,
+      novelty: llm.novelty ?? null,
+      aiRelevance: llm.ai_relevance ?? null,
+      credibility: llm.credibility ?? null
+    }
+  };
+}
+
+function sortScoredEntries(entries) {
+  return entries
+    .slice()
+    .sort((left, right) => (right.blendedScore ?? right.score) - (left.blendedScore ?? left.score));
+}
+
+function isCompatibleCache(cached, config) {
+  return Boolean(
+    cached &&
+      cached.provider === config.provider &&
+      cached.model === config.model &&
+      Number.isFinite(Number(cached.overall_score))
+  );
 }
 
 function extractResponsesOutputText(payload) {
@@ -299,6 +375,24 @@ function extractJsonObject(value) {
   }
 
   throw new Error("No complete JSON value found in model response.");
+}
+
+function parseModelJson(value) {
+  const jsonText = extractJsonObject(value);
+
+  try {
+    return JSON.parse(jsonText);
+  } catch (error) {
+    const normalized = jsonText
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'");
+    try {
+      return JSON.parse(normalized);
+    } catch {
+      throw new Error(`Unable to parse highlight JSON: ${error.message}`);
+    }
+  }
 }
 
 function normalizeBaseUrl(value) {

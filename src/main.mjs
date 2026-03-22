@@ -27,9 +27,11 @@ try {
   if (result.translationEnabled) {
     console.log(`\u5df2\u7ffb\u8bd1\u6761\u6570: ${result.translatedEntries}`);
     console.log(`\u8df3\u8fc7\u7ffb\u8bd1\u6761\u6570: ${result.translationSkippedEntries}`);
+    console.log(`\u7ffb\u8bd1\u7f13\u5b58\u547d\u4e2d: ${result.translationCacheHits}`);
   }
   if (result.llmHighlightScoringEnabled) {
     console.log(`LLM\u6253\u5206\u5019\u9009\u6570: ${result.llmHighlightScoredCount}`);
+    console.log(`Highlights \u7f13\u5b58\u547d\u4e2d: ${result.llmHighlightCacheHits}`);
   }
   if (result.createdEntryPreview.length > 0) {
     console.log("\u65b0\u589e\u6761\u76ee\u9884\u89c8:");

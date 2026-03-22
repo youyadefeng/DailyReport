@@ -1,11 +1,6 @@
-const CATEGORY_RULES = [
-  { category: "Models", keywords: ["model", "llm", "gpt", "claude", "gemini", "reasoning"] },
-  { category: "Products", keywords: ["api", "app", "agent", "assistant", "launch", "release"] },
-  { category: "Open Source", keywords: ["open source", "github", "weights", "repo", "repository"] },
-  { category: "Research", keywords: ["paper", "research", "benchmark", "arxiv", "study"] },
-  { category: "Industry", keywords: ["funding", "policy", "enterprise", "regulation", "market"] },
-  { category: "Guides", keywords: ["guide", "tutorial", "how to", "cookbook", "example"] }
-];
+import { APP_CONFIG } from "../../config/project.config.mjs";
+
+const CATEGORY_RULES = APP_CONFIG.categorization.rules;
 
 export function stripHtml(value) {
   return decodeHtmlEntities(
@@ -77,5 +72,26 @@ export function scoreEntry({ title, summary, source }) {
 }
 
 export function slugDate(date = new Date()) {
-  return date.toISOString().slice(0, 10);
+  return formatDateParts(date).day;
+}
+
+export function slugHour(date = new Date()) {
+  return formatDateParts(date).hour;
+}
+
+function formatDateParts(date) {
+  const formatter = new Intl.DateTimeFormat("zh-CN", {
+    hour12: false,
+    timeZone: APP_CONFIG.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit"
+  });
+  const parts = formatter.formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const day = `${lookup.year}-${lookup.month}-${lookup.day}`;
+  const hour = `${day}_${lookup.hour}`;
+
+  return { day, hour };
 }

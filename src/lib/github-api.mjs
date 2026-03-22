@@ -1,7 +1,8 @@
 import { fetchResponse } from "./http-utils.mjs";
+import { APP_CONFIG } from "../../config/project.config.mjs";
 
-const GITHUB_API_ACCEPT = "application/vnd.github+json";
-const CONTRIBUTOR_TIMEOUT_MS = 15000;
+const GITHUB_API_ACCEPT = APP_CONFIG.github.apiAccept;
+const CONTRIBUTOR_TIMEOUT_MS = APP_CONFIG.network.githubContributorTimeoutMs;
 
 export async function parseGitHubSearchResponse(jsonText, source = {}) {
   const payload = JSON.parse(jsonText);
@@ -128,6 +129,6 @@ function formatBeijingTime(value) {
 
   return parsed.toLocaleString("zh-CN", {
     hour12: false,
-    timeZone: "Asia/Shanghai"
+    timeZone: APP_CONFIG.timeZone
   });
 }

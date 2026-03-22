@@ -4,7 +4,7 @@ node_modules/
 logs/
 data/
 reports/
-.env.local
+config/.env.local
 
 .DS_Store
 Thumbs.db

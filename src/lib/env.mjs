@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { APP_CONFIG } from "../../config/project.config.mjs";
 
 export function loadLocalEnv() {
-  const envPath = path.join(process.cwd(), ".env.local");
+  const envPath = APP_CONFIG.paths.localEnv;
   if (!existsSync(envPath)) {
     return { loaded: false, path: envPath };
   }

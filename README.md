@@ -70,6 +70,7 @@ MINIMAX_BASE_URL=https://api.minimax.io/v1
 
 ## 目录说明
 
+- [src/lib/config.mjs](F:\CodexProject\src\lib\config.mjs): 统一的项目默认配置，集中管理路径、超时、重试、模型默认值、缓存保留天数等
 - [src/main.mjs](F:\CodexProject\src\main.mjs): 管线入口
 - [src/lib/pipeline.mjs](F:\CodexProject\src\lib\pipeline.mjs): 抓取、去重、日报生成
 - [src/lib/rss.mjs](F:\CodexProject\src\lib\rss.mjs): 轻量 RSS/Atom 解析

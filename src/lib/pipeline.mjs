@@ -4,7 +4,16 @@ import { readJson, writeJson, ensureDir } from "./fs-utils.mjs";
 import { parseGitHubSearchResponse } from "./github-api.mjs";
 import { fetchText } from "./http-utils.mjs";
 import { parseRss } from "./rss.mjs";
-import { buildSummary, categorizeText, scoreEntry, slugDate } from "./text-utils.mjs";
+import { buildSummary, categorizeText, scoreEntry, slugDate, slugHour } from "./text-utils.mjs";
+import { APP_CONFIG } from "../../config/project.config.mjs";
+import {
+  getCachedHighlight,
+  getCachedTranslation,
+  loadLlmCache,
+  saveLlmCache,
+  setCachedHighlight,
+  setCachedTranslation
+} from "./llm-cache.mjs";
 import {
   getHighlightScoringConfig,
   pickHighlightCandidates,
@@ -12,11 +21,10 @@ import {
 } from "./highlight-scorer.mjs";
 import { getTranslationConfig, translateEntries } from "./translator.mjs";
 
-const ROOT_DIR = process.cwd();
-const SOURCES_PATH = path.join(ROOT_DIR, "sources", "sources.json");
-const STORE_PATH = path.join(ROOT_DIR, "data", "entries.json");
-const REPORTS_DIR = path.join(ROOT_DIR, "reports");
-const MAX_FETCH_ATTEMPTS = 3;
+const SOURCES_PATH = APP_CONFIG.paths.sources;
+const STORE_PATH = APP_CONFIG.paths.store;
+const REPORTS_DIR = APP_CONFIG.paths.reportsDir;
+const MAX_FETCH_ATTEMPTS = APP_CONFIG.pipeline.maxFetchAttempts;
 const ANSI = {
   reset: "\u001b[0m",
   dim: "\u001b[2m",
@@ -52,7 +60,7 @@ export async function fetchSource(source) {
             ? "application/vnd.github+json"
             : "text/html,application/xhtml+xml"
     },
-    timeoutMs: source.type === "rss" ? 20000 : 45000
+    timeoutMs: source.type === "rss" ? APP_CONFIG.network.rssTimeoutMs : APP_CONFIG.network.sourceTimeoutMs
   });
 
   switch (source.type) {
@@ -181,9 +189,12 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
   const createdEntries = [];
   const translationConfig = getTranslationConfig();
   const highlightScoringConfig = getHighlightScoringConfig();
+  const llmCache = await loadLlmCache();
   let translatedCount = 0;
   let translationSkippedCount = 0;
+  let translationCacheHitCount = 0;
   let llmHighlightScoredCount = 0;
+  let llmHighlightCacheHitCount = 0;
 
   if (sources.length === 0) {
     throw new Error("No sources matched the requested filters.");
@@ -284,10 +295,15 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     }
     const translationResult = await translateEntries(incomingEntries, {
       config: translationConfig,
-      verbose
+      verbose,
+      cache: {
+        getTranslation: (entryId) => getCachedTranslation(llmCache, entryId),
+        setTranslation: (entryId, value) => setCachedTranslation(llmCache, entryId, value)
+      }
     });
     translatedCount = translationResult.translatedCount;
     translationSkippedCount = translationResult.skippedCount;
+    translationCacheHitCount = translationResult.cacheHitCount;
     if (verbose) {
       console.log(
         colorize(
@@ -295,6 +311,9 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
           translatedCount > 0 ? "green" : "dim"
         )
       );
+      if (translationCacheHitCount > 0) {
+        console.log(colorize(`[3/4] \u7ffb\u8bd1\u7f13\u5b58\u547d\u4e2d: ${translationCacheHitCount} \u6761`, "green"));
+      }
     }
   }
 
@@ -317,9 +336,15 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
 
   const reportOutput = await writeDailyReport(mergedEntries, failures, {
     highlightScoringConfig,
-    verbose
+    verbose,
+    highlightCache: {
+      getHighlight: (entryId) => getCachedHighlight(llmCache, entryId),
+      setHighlight: (entryId, value) => setCachedHighlight(llmCache, entryId, value)
+    }
   });
   llmHighlightScoredCount = reportOutput.llmHighlightScoredCount;
+  llmHighlightCacheHitCount = reportOutput.llmHighlightCacheHitCount;
+  await saveLlmCache(llmCache);
 
   if (verbose) {
     console.log(colorize(`[4/4] \u65e5\u62a5\u5df2\u5199\u5165: ${reportOutput.reportPath}`, "green"));
@@ -339,6 +364,9 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     } else {
       console.log(colorize("[4/4] \u65e5\u62a5\u91cd\u70b9: \u65e0", "dim"));
     }
+    if (llmHighlightCacheHitCount > 0) {
+      console.log(colorize(`[4/4] Highlights \u7f13\u5b58\u547d\u4e2d: ${llmHighlightCacheHitCount} \u6761`, "green"));
+    }
     console.log(colorize(`\u603b\u8017\u65f6: ${formatDuration(Date.now() - startedAtMs)}`, "bold"));
   }
 
@@ -356,9 +384,11 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     translationModel: translationConfig.enabled ? translationConfig.model : null,
     translatedEntries: translatedCount,
     translationSkippedEntries: translationSkippedCount,
+    translationCacheHits: translationCacheHitCount,
     llmHighlightScoringEnabled: highlightScoringConfig.enabled,
     llmHighlightModel: highlightScoringConfig.enabled ? highlightScoringConfig.model : null,
     llmHighlightScoredCount,
+    llmHighlightCacheHits: llmHighlightCacheHitCount,
     failures,
     reportPath: reportOutput.reportPath,
     reportHighlights: reportOutput.topEntries
@@ -407,7 +437,7 @@ function formatBeijingTime(value) {
 
   return parsed.toLocaleString("zh-CN", {
     hour12: false,
-    timeZone: "Asia/Shanghai"
+    timeZone: APP_CONFIG.timeZone
   });
 }
 
@@ -471,12 +501,16 @@ function colorize(value, color) {
 export async function writeDailyReport(entries, failures = [], options = {}) {
   await ensureDir(REPORTS_DIR);
   const dateSlug = slugDate();
-  const reportPath = path.join(REPORTS_DIR, `${dateSlug}.md`);
+  const reportId = slugHour();
+  const dailyReportsDir = path.join(REPORTS_DIR, dateSlug);
+  await ensureDir(dailyReportsDir);
+  const reportPath = path.join(dailyReportsDir, `${reportId}.md`);
   const recentEntries = entries.filter((entry) => (entry.publishedAt || entry.fetchedAt).startsWith(dateSlug));
   const highlightCandidates = pickHighlightCandidates(recentEntries);
   const scoredHighlights = await scoreHighlightCandidates(highlightCandidates, {
     config: options.highlightScoringConfig,
-    verbose: options.verbose
+    verbose: options.verbose,
+    cache: options.highlightCache
   });
   const topEntries = scoredHighlights.scoredEntries.slice(0, 5);
   const groupedEntries = groupBySection(recentEntries);
@@ -484,7 +518,7 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   const lines = [
     `# AI 日报 - ${dateSlug}`,
     "",
-    `- 生成时间: ${new Date().toLocaleString("zh-CN", { hour12: false })}`,
+    `- 生成时间: ${new Date().toLocaleString("zh-CN", { hour12: false, timeZone: APP_CONFIG.timeZone })}`,
     `- 今日条目: ${recentEntries.length}`,
     `- 失败源数: ${failures.length}`,
     "",
@@ -554,7 +588,8 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   return {
     reportPath,
     topEntries,
-    llmHighlightScoredCount: scoredHighlights.scoredCount
+    llmHighlightScoredCount: scoredHighlights.scoredCount,
+    llmHighlightCacheHitCount: scoredHighlights.cacheHitCount
   };
 }
 

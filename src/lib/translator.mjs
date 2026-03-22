@@ -1,9 +1,11 @@
-const OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const OPENAI_DEFAULT_MODEL = "gpt-4o-mini";
-const MINIMAX_DEFAULT_BASE_URL = "https://api.minimax.io/v1";
-const MINIMAX_DEFAULT_MODEL = "MiniMax-M2.5";
-const OPENAI_TRANSLATION_CHUNK_SIZE = 8;
-const MINIMAX_TRANSLATION_CHUNK_SIZE = 1;
+import { APP_CONFIG } from "../../config/project.config.mjs";
+
+const OPENAI_DEFAULT_BASE_URL = APP_CONFIG.translation.openai.defaultBaseUrl;
+const OPENAI_DEFAULT_MODEL = APP_CONFIG.translation.openai.defaultModel;
+const MINIMAX_DEFAULT_BASE_URL = APP_CONFIG.translation.minimax.defaultBaseUrl;
+const MINIMAX_DEFAULT_MODEL = APP_CONFIG.translation.minimax.defaultModel;
+const OPENAI_TRANSLATION_CHUNK_SIZE = APP_CONFIG.translation.chunkSize.openai;
+const MINIMAX_TRANSLATION_CHUNK_SIZE = APP_CONFIG.translation.chunkSize.minimax;
 const TRANSLATION_SYSTEM_PROMPT =
   "You are translating AI news items into Simplified Chinese for a daily intelligence brief. " +
   "For each item, output a concise Chinese title and a Chinese summary that reads like a news brief. " +
@@ -43,25 +45,51 @@ export function getTranslationConfig() {
   };
 }
 
-export async function translateEntries(entries, { config, verbose = false } = {}) {
+export async function translateEntries(entries, { config, verbose = false, cache = null } = {}) {
   if (!config?.enabled || entries.length === 0) {
     return {
       translatedCount: 0,
-      skippedCount: entries.length
+      skippedCount: entries.length,
+      cacheHitCount: 0
     };
   }
 
   let translatedCount = 0;
   let skippedCount = 0;
+  let cacheHitCount = 0;
   const chunkSize = config.provider === "minimax" ? MINIMAX_TRANSLATION_CHUNK_SIZE : OPENAI_TRANSLATION_CHUNK_SIZE;
 
   for (let index = 0; index < entries.length; index += chunkSize) {
     const chunk = entries.slice(index, index + chunkSize);
     const chunkLabel = `${Math.floor(index / chunkSize) + 1}/${Math.ceil(entries.length / chunkSize)}`;
-    const pending = chunk.filter((entry) => entry.title && entry.summary && (!entry.titleZh || !entry.summaryZh));
+    const pending = [];
+
+    for (const entry of chunk) {
+      if (!entry.title || !entry.summary) {
+        skippedCount += 1;
+        continue;
+      }
+      if (entry.titleZh && entry.summaryZh) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const cached = cache?.getTranslation?.(entry.id);
+      if (isCompatibleTranslationCache(cached, config)) {
+        entry.titleZh = cached.titleZh;
+        entry.summaryZh = cached.summaryZh;
+        entry.translationProvider = cached.provider ?? config.provider;
+        entry.translationModel = cached.model ?? config.model;
+        entry.translatedAt = cached.translatedAt ?? new Date().toISOString();
+        cacheHitCount += 1;
+        skippedCount += 1;
+        continue;
+      }
+
+      pending.push(entry);
+    }
 
     if (pending.length === 0) {
-      skippedCount += chunk.length;
       continue;
     }
 
@@ -105,14 +133,32 @@ export async function translateEntries(entries, { config, verbose = false } = {}
       entry.translationProvider = config.provider;
       entry.translationModel = config.model;
       entry.translatedAt = new Date().toISOString();
+      cache?.setTranslation?.(entry.id, {
+        titleZh,
+        summaryZh,
+        provider: config.provider,
+        model: config.model,
+        translatedAt: entry.translatedAt
+      });
       translatedCount += 1;
     }
   }
 
   return {
     translatedCount,
-    skippedCount
+    skippedCount,
+    cacheHitCount
   };
+}
+
+function isCompatibleTranslationCache(cached, config) {
+  return Boolean(
+    cached &&
+      cached.provider === config.provider &&
+      cached.model === config.model &&
+      cached.titleZh &&
+      cached.summaryZh
+  );
 }
 
 async function requestOpenAITranslations(entries, config) {

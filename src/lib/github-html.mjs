@@ -1,23 +1,8 @@
 import { decodeHtmlEntities, stripHtml } from "./text-utils.mjs";
+import { APP_CONFIG } from "../../config/project.config.mjs";
 
 const GITHUB_ROOT = "https://github.com";
-const DEFAULT_AI_KEYWORDS = [
-  "ai",
-  "artificial intelligence",
-  "llm",
-  "gpt",
-  "agent",
-  "agents",
-  "rag",
-  "diffusion",
-  "embedding",
-  "inference",
-  "reasoning",
-  "transformer",
-  "vision-language",
-  "multimodal",
-  "prompt"
-];
+const DEFAULT_AI_KEYWORDS = APP_CONFIG.github.defaultAiKeywords;
 
 export function parseGitHubTrending(html, source = {}) {
   const blocks = extractBlocks(html, /<article class="Box-row">([\s\S]*?)<\/article>/gi);
