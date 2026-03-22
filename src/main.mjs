@@ -63,13 +63,23 @@ try {
       );
     }
   }
-  if (result.reportHighlights.length > 0) {
-    console.log("\u65e5\u62a5\u91cd\u70b9\u9884\u89c8:");
-    for (const [index, entry] of result.reportHighlights.entries()) {
+  if (result.reportHighlightsNonGithub?.length > 0) {
+    console.log("\u975e GitHub \u4eca\u65e5\u91cd\u70b9\u9884\u89c8:");
+    for (const [index, entry] of result.reportHighlightsNonGithub.entries()) {
       console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
       if (entry.highlightReasonZh) {
         console.log(`   \u5165\u9009\u7406\u7531: ${entry.highlightReasonZh}`);
       }
+    }
+  }
+  if (result.reportHighlightsGithub?.length > 0) {
+    console.log("GitHub \u4eca\u65e5\u91cd\u70b9\u9884\u89c8:");
+    for (const [index, entry] of result.reportHighlightsGithub.entries()) {
+      const stars = Number(entry.github?.stars ?? 0);
+      const watchers = Number(entry.github?.watchers ?? 0);
+      const forks = Number(entry.github?.forks ?? 0);
+      const popularityScore = stars * 5 + forks * 3 + watchers;
+      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}] | \u70ed\u5ea6\u5206 ${popularityScore}`);
     }
   }
 } catch (error) {

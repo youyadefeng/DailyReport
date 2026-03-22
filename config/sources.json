@@ -1,6 +1,15 @@
 {
   "sources": [
     {
+      "name": "Anthropic News",
+      "enabled": true,
+      "type": "anthropic-news-html",
+      "url": "https://www.anthropic.com/news",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "product"]
+    },
+    {
       "name": "OpenAI News",
       "enabled": true,
       "type": "rss",
@@ -19,6 +28,15 @@
       "tags": ["official", "blog"]
     },
     {
+      "name": "Meta AI News",
+      "enabled": true,
+      "type": "rss",
+      "url": "https://about.fb.com/news/tag/ai/feed/",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "blog"]
+    },
+    {
       "name": "Hacker News AI",
       "enabled": true,
       "type": "rss",
@@ -28,13 +46,33 @@
       "tags": ["community", "trending"]
     },
     {
-      "name": "GitHub Trending AI",
+      "name": "Hugging Face Blog",
       "enabled": true,
-      "type": "github-api-search",
-      "url": "https://api.github.com/search/repositories?q=topic:artificial-intelligence&sort=updated&order=desc&per_page=10",
+      "type": "huggingface-blog-html",
+      "url": "https://huggingface.co/blog",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "models"]
+    },
+    {
+      "name": "arXiv cs.AI",
+      "enabled": true,
+      "type": "rss",
+      "url": "https://export.arxiv.org/api/query?search_query=cat:cs.AI&sortBy=submittedDate&sortOrder=descending&max_results=10",
       "limit": 10,
       "priority": 2,
-      "tags": ["github", "open-source", "trending"]
+      "tags": ["research", "papers"]
+    },
+    {
+      "name": "GitHub Rising AI",
+      "enabled": true,
+      "type": "github-api-search",
+      "url": "https://api.github.com/search/repositories?q=topic:artificial-intelligence+stars:%3E50&sort=updated&order=desc&per_page=20",
+      "limit": 10,
+      "minStars": 50,
+      "minPopularityScore": 400,
+      "priority": 2,
+      "tags": ["github", "open-source", "rising"]
     },
     {
       "name": "GitHub AI Topic",
@@ -42,6 +80,8 @@
       "type": "github-api-search",
       "url": "https://api.github.com/search/repositories?q=topic:artificial-intelligence&sort=stars&order=desc&per_page=10",
       "limit": 10,
+      "minStars": 50,
+      "minPopularityScore": 400,
       "priority": 2,
       "tags": ["github", "open-source", "curated"]
     }

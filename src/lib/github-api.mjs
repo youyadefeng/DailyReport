@@ -9,6 +9,7 @@ export async function parseGitHubSearchResponse(jsonText, source = {}) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const repositories = items
     .map((item) => normalizeRepository(item, source))
+    .filter((repository) => passesSourceThresholds(repository, source))
     .filter(Boolean)
     .slice(0, source.limit ?? 20);
 
@@ -62,6 +63,30 @@ function normalizeRepository(item, source) {
     },
     githubContributorsUrl: typeof item.contributors_url === "string" ? item.contributors_url : null
   };
+}
+
+function passesSourceThresholds(repository, source) {
+  if (!repository?.github) {
+    return false;
+  }
+
+  const stars = Number(repository.github.stars ?? 0);
+  const watchers = Number(repository.github.watchers ?? 0);
+  const forks = Number(repository.github.forks ?? 0);
+  const popularityScore = stars * 5 + forks * 3 + watchers;
+
+  const minStars = Number(source.minStars ?? 0);
+  const minPopularityScore = Number(source.minPopularityScore ?? 0);
+
+  if (Number.isFinite(minStars) && stars < minStars) {
+    return false;
+  }
+
+  if (Number.isFinite(minPopularityScore) && popularityScore < minPopularityScore) {
+    return false;
+  }
+
+  return true;
 }
 
 async function enrichContributorCounts(repositories) {

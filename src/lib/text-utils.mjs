@@ -24,7 +24,7 @@ export function decodeHtmlEntities(value) {
 }
 
 export function buildSummary(text, maxSentences = 2) {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const normalized = sanitizeFeedNoise(text).replace(/\s+/g, " ").trim();
   if (!normalized) {
     return "No summary available.";
   }
@@ -39,6 +39,18 @@ export function buildSummary(text, maxSentences = 2) {
   }
 
   return sentences.slice(0, maxSentences).join(" ").slice(0, 220);
+}
+
+export function sanitizeFeedNoise(text) {
+  return String(text)
+    .replace(/Comments URL:\s*\S+/gi, " ")
+    .replace(/Article URL:\s*\S+/gi, " ")
+    .replace(/Points:\s*\d+/gi, " ")
+    .replace(/#\s*Comments:\s*\d+/gi, " ")
+    .replace(/\bComments:\s*\d+/gi, " ")
+    .replace(/\s+\|\s+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 export function categorizeText(...values) {

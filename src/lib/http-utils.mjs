@@ -1,25 +1,35 @@
 import http from "node:http";
 import https from "node:https";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { APP_CONFIG } from "../../config/project.config.mjs";
 
 const DEFAULT_TIMEOUT_MS = APP_CONFIG.network.defaultTimeoutMs;
 const DEFAULT_MAX_REDIRECTS = APP_CONFIG.network.defaultMaxRedirects;
+const execFileAsync = promisify(execFile);
 
-export function fetchText(url, options = {}) {
+export async function fetchText(url, options = {}) {
   const {
     headers = {},
     timeoutMs = DEFAULT_TIMEOUT_MS,
     maxRedirects = DEFAULT_MAX_REDIRECTS
   } = options;
 
-  return new Promise((resolve, reject) => {
-    requestRaw(
-      url,
-      { headers, timeoutMs, maxRedirects },
-      (response) => resolve(response.body),
-      reject
-    );
-  });
+  try {
+    return await new Promise((resolve, reject) => {
+      requestRaw(
+        url,
+        { headers, timeoutMs, maxRedirects },
+        (response) => resolve(response.body),
+        reject
+      );
+    });
+  } catch (error) {
+    if (!shouldUseCurlFallback(url, error)) {
+      throw error;
+    }
+    return fetchTextViaCurl(url, { headers, timeoutMs });
+  }
 }
 
 export async function fetchJson(url, options = {}) {
@@ -97,4 +107,43 @@ function requestRaw(url, options, resolve, reject) {
 
   request.on("error", reject);
   request.end();
+}
+
+function shouldUseCurlFallback(url, error) {
+  const hostname = new URL(url).hostname.toLowerCase();
+  if (!(hostname === "huggingface.co" || hostname.endsWith(".huggingface.co"))) {
+    return false;
+  }
+
+  const message = String(error?.message ?? "").toLowerCase();
+  return message.includes("timeout") || message.includes("connect");
+}
+
+async function fetchTextViaCurl(url, { headers, timeoutMs }) {
+  const executable = process.platform === "win32" ? "curl.exe" : "curl";
+  const args = [
+    "--location",
+    "--silent",
+    "--show-error",
+    "--max-time",
+    String(Math.max(1, Math.ceil(timeoutMs / 1000))),
+    "--user-agent",
+    headers["user-agent"] ?? "ai-news-pipeline/1.0"
+  ];
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === "user-agent") {
+      continue;
+    }
+    args.push("--header", `${key}: ${value}`);
+  }
+
+  args.push(url);
+
+  const { stdout } = await execFileAsync(executable, args, {
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024
+  });
+
+  return stdout;
 }
