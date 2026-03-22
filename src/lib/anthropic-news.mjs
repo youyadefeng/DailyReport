@@ -7,6 +7,12 @@ export function parseAnthropicNews(html, source = {}) {
   const seen = new Set();
 
   for (const match of html.matchAll(
+    /<article class="ArticleList[^"]*__article">[\s\S]*?<a class="ArticleList[^"]*__cardLink" href="(?<href>\/[^"]+)">[\s\S]*?<h3[^>]*>(?<title>.*?)<\/h3>[\s\S]*?<div class="body-2 ArticleList[^"]*__date">(?<date>.*?)<\/div>/gi
+  )) {
+    pushItem(items, seen, match.groups);
+  }
+
+  for (const match of html.matchAll(
     /<a href="(?<href>\/[^"]+)" class="FeaturedGrid[^"]*__content">[\s\S]*?<h2[^>]*>(?<title>.*?)<\/h2>[\s\S]*?<time[^>]*>(?<date>.*?)<\/time>[\s\S]*?<p[^>]*>(?<desc>.*?)<\/p>/gi
   )) {
     pushItem(items, seen, match.groups);

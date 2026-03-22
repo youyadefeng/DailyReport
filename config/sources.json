@@ -10,6 +10,24 @@
       "tags": ["official", "product"]
     },
     {
+      "name": "Anthropic Engineering",
+      "enabled": true,
+      "type": "anthropic-news-html",
+      "url": "https://www.anthropic.com/engineering",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "engineering"]
+    },
+    {
+      "name": "Anthropic Research",
+      "enabled": true,
+      "type": "anthropic-news-html",
+      "url": "https://www.anthropic.com/research",
+      "limit": 10,
+      "priority": 3,
+      "tags": ["official", "research"]
+    },
+    {
       "name": "OpenAI News",
       "enabled": true,
       "type": "rss",
