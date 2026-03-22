@@ -38,7 +38,16 @@ const ANSI = {
 
 export async function loadSources() {
   const config = await readJson(SOURCES_PATH, { sources: [] });
-  return config.sources ?? [];
+  return (config.sources ?? []).filter((source) => source.enabled !== false);
+}
+
+export async function loadSourceStatus() {
+  const config = await readJson(SOURCES_PATH, { sources: [] });
+  const allSources = config.sources ?? [];
+  return {
+    enabledSources: allSources.filter((source) => source.enabled !== false),
+    disabledSources: allSources.filter((source) => source.enabled === false)
+  };
 }
 
 export async function loadStore() {
@@ -166,15 +175,50 @@ function groupBySection(entries) {
       return leftPriority - rightPriority;
     }
     return right[1].length - left[1].length;
-  });
+  }).map(([section, sectionEntries]) => [
+    section,
+    sortSectionEntries(sectionEntries, section)
+  ]);
 }
 
 function isGitHubEntry(entry) {
   return entry.source.startsWith("GitHub") || entry.tags.includes("github");
 }
 
+function sortSectionEntries(entries, section) {
+  if (section === "GitHub / Open Source") {
+    return entries.slice().sort(compareGitHubEntries);
+  }
+
+  return entries;
+}
+
+function compareGitHubEntries(left, right) {
+  const popularityDiff = getGitHubPopularityScore(right) - getGitHubPopularityScore(left);
+  if (popularityDiff !== 0) {
+    return popularityDiff;
+  }
+
+  const leftUpdated = left.github?.updatedAt ?? left.publishedAt ?? left.fetchedAt ?? "";
+  const rightUpdated = right.github?.updatedAt ?? right.publishedAt ?? right.fetchedAt ?? "";
+  return rightUpdated.localeCompare(leftUpdated);
+}
+
+function getGitHubPopularityScore(entry) {
+  if (!entry.github) {
+    return 0;
+  }
+
+  const stars = Number(entry.github.stars ?? 0);
+  const watchers = Number(entry.github.watchers ?? 0);
+  const forks = Number(entry.github.forks ?? 0);
+
+  return stars * 5 + forks * 3 + watchers;
+}
+
 export async function runPipeline({ verbose = false, sourceFilters = [], tagFilters = [] } = {}) {
-  const allSources = await loadSources();
+  const sourceStatus = await loadSourceStatus();
+  const allSources = sourceStatus.enabledSources;
   const sources = filterSources(allSources, { sourceFilters, tagFilters });
   const store = await loadStore();
   const existingEntries = store.entries ?? [];
@@ -203,6 +247,14 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
   if (verbose) {
     console.log(colorize(`[1/4] \u5df2\u52a0\u8f7d ${sources.length} \u4e2a\u4fe1\u606f\u6e90`, "bold"));
     console.log(colorize(`[1/4] \u5f53\u524d\u672c\u5730\u5e93\u5b58\u6761\u76ee: ${existingEntries.length}`, "dim"));
+    if (sourceStatus.disabledSources.length > 0) {
+      console.log(
+        colorize(
+          `[1/4] \u5df2\u5173\u95ed\u4fe1\u606f\u6e90: ${sourceStatus.disabledSources.map((source) => source.name).join(" | ")}`,
+          "yellow"
+        )
+      );
+    }
     console.log(
       colorize(
         `[1/4] \u4e2d\u6587\u7ffb\u8bd1: ${
@@ -379,7 +431,7 @@ export async function runPipeline({ verbose = false, sourceFilters = [], tagFilt
     refreshedEntries: updatedCount,
     totalEntries: mergedEntries.length,
     createdEntryPreview: createdEntries.slice(0, 5),
-    githubCreatedEntryPreview: createdEntries.filter((entry) => isGitHubEntry(entry)).slice(0, 5),
+    githubCreatedEntryPreview: createdEntries.filter((entry) => isGitHubEntry(entry)).sort(compareGitHubEntries).slice(0, 5),
     translationEnabled: translationConfig.enabled,
     translationModel: translationConfig.enabled ? translationConfig.model : null,
     translatedEntries: translatedCount,
@@ -554,6 +606,7 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
       if (section === "GitHub / Open Source") {
         lines.push(`- 分类: ${entry.category}`);
         if (entry.github) {
+          lines.push(`- 热度分: ${getGitHubPopularityScore(entry)}`);
           lines.push(`- Stars: ${entry.github.stars ?? "unknown"}`);
           lines.push(`- Watchers: ${entry.github.watchers ?? "unknown"}`);
           lines.push(`- Forks: ${entry.github.forks ?? "unknown"}`);

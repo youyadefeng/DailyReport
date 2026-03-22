@@ -44,8 +44,12 @@ try {
     for (const [index, entry] of result.githubCreatedEntryPreview.entries()) {
       console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
       if (entry.github) {
+        const stars = Number(entry.github.stars ?? 0);
+        const watchers = Number(entry.github.watchers ?? 0);
+        const forks = Number(entry.github.forks ?? 0);
+        const popularityScore = stars * 5 + forks * 3 + watchers;
         console.log(
-          `   Stars: ${entry.github.stars ?? "unknown"} | Watchers: ${entry.github.watchers ?? "unknown"} | Forks: ${entry.github.forks ?? "unknown"} | Contributors: ${entry.github.contributors ?? "unknown"}`
+          `   热度分: ${popularityScore} | Stars: ${entry.github.stars ?? "unknown"} | Watchers: ${entry.github.watchers ?? "unknown"} | Forks: ${entry.github.forks ?? "unknown"} | Contributors: ${entry.github.contributors ?? "unknown"}`
         );
         console.log(`   \u6700\u8fd1\u66f4\u65b0: ${entry.github.updatedAtCn ?? entry.github.updatedAt ?? entry.publishedAt ?? "unknown"}`);
       }
