@@ -26,6 +26,10 @@ export const APP_CONFIG = {
     llmCacheDir: path.join(ROOT_DIR, "data", "llm-cache"),
     // 旧版单文件 LLM 缓存，保留给迁移兼容使用。
     llmCacheLegacyFile: path.join(ROOT_DIR, "data", "llm-cache.json"),
+    // 收藏条目的永久保存文件。
+    favoritesFile: path.join(ROOT_DIR, "data", "favorites", "favorites.json"),
+    // 收藏条目的 Markdown 索引，方便直接打开查看。
+    favoritesIndexFile: path.join(ROOT_DIR, "data", "favorites", "index.md"),
     // 本地私密环境变量文件。
     localEnv: path.join(ROOT_DIR, "config", ".env.local")
   },

@@ -2,7 +2,9 @@ node_modules/
 .npm-cache/
 
 logs/
-data/
+data/*
+!data/favorites/
+!data/favorites/**
 reports/
 config/.env.local
 

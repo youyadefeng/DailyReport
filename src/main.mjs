@@ -1,131 +1,180 @@
-import { runPipeline } from "./lib/pipeline.mjs";
+import { addFavorite, findEntryForFavorite, loadFavorites, removeFavorite, renderFavoriteList } from "./lib/favorites.mjs";
+import { loadStore, runPipeline } from "./lib/pipeline.mjs";
 
 const options = parseArgs(process.argv.slice(2));
 
 try {
-  const result = await runPipeline(options);
-  console.log(`\u6267\u884c\u5b8c\u6210\u65f6\u95f4: ${result.fetchedAt}`);
-  console.log(`\u4fe1\u606f\u6e90\u6570\u91cf: ${result.sources}`);
-  if (result.selectedSourceNames?.length > 0) {
-    console.log(`\u672c\u6b21\u8fd0\u884c\u4fe1\u606f\u6e90: ${result.selectedSourceNames.join(" | ")}`);
-  }
-  console.log(`\u672c\u8f6e\u6293\u53d6\u6761\u6570: ${result.newEntries}`);
-  console.log(`\u672c\u8f6e\u65b0\u589e\u6761\u6570: ${result.createdEntries}`);
-  console.log(`\u672c\u8f6e\u5237\u65b0\u6761\u6570: ${result.refreshedEntries}`);
-  console.log(`\u5f53\u524d\u603b\u6761\u6570: ${result.totalEntries}`);
-  console.log(`\u65e5\u62a5\u8def\u5f84: ${result.reportPath}`);
-  console.log(
-    `\u4e2d\u6587\u7ffb\u8bd1: ${
-      result.translationEnabled ? `\u5df2\u542f\u7528 (${result.translationModel})` : "\u672a\u542f\u7528"
-    }`
-  );
-  console.log(
-    `LLM\u91cd\u70b9\u6392\u5e8f: ${
-      result.llmHighlightScoringEnabled ? `\u5df2\u542f\u7528 (${result.llmHighlightModel})` : "\u672a\u542f\u7528"
-    }`
-  );
-  if (result.translationEnabled) {
-    console.log(`\u5df2\u7ffb\u8bd1\u6761\u6570: ${result.translatedEntries}`);
-    console.log(`\u8df3\u8fc7\u7ffb\u8bd1\u6761\u6570: ${result.translationSkippedEntries}`);
-    console.log(`\u5b9e\u9645\u8c03\u7528\u7ffb\u8bd1 LLM \u6761\u6570: ${result.translationRequestedEntries}`);
-    console.log(`\u5b9e\u9645\u8c03\u7528\u7ffb\u8bd1 LLM \u6279\u6b21: ${result.translationRequestBatchCount}`);
-    console.log(`\u5df2\u6709\u4e2d\u6587\u5b57\u6bb5\u8df3\u8fc7: ${result.translationExistingFieldSkips}`);
-    console.log(`\u7ffb\u8bd1\u7f13\u5b58\u547d\u4e2d: ${result.translationCacheHits}`);
-    console.log(`\u5f53\u5929\u7ffb\u8bd1\u5931\u8d25\u7f13\u5b58\u8df3\u8fc7: ${result.translationFailureCacheSkips}`);
-    console.log(`\u672c\u8f6e\u7ffb\u8bd1\u5931\u8d25: ${result.translationFailedEntries}`);
-    console.log(
-      `\u7ffb\u8bd1 Token \u6d88\u8017: \u8f93\u5165 ${result.translationUsage.inputTokens} | \u8f93\u51fa ${result.translationUsage.outputTokens} | \u5408\u8ba1 ${result.translationUsage.totalTokens}`
-    );
-    if (result.translationMissingContentSkips > 0) {
-      console.log(`\u7f3a\u5c11\u6807\u9898\u6216\u6458\u8981\u8df3\u8fc7: ${result.translationMissingContentSkips}`);
+  if (options.favoriteTarget || options.unfavoriteTarget || options.listFavorites) {
+    await handleFavoritesCommand(options);
+  } else {
+    const result = await runPipeline(options);
+    console.log(`执行完成时间: ${result.fetchedAt}`);
+    console.log(`信息源数量: ${result.sources}`);
+    if (result.selectedSourceNames?.length > 0) {
+      console.log(`本次运行信息源: ${result.selectedSourceNames.join(" | ")}`);
     }
-  }
-  if (result.llmHighlightScoringEnabled) {
-    console.log(`LLM\u6253\u5206\u5019\u9009\u6570: ${result.llmHighlightScoredCount}`);
-    console.log(`Highlights \u7f13\u5b58\u547d\u4e2d: ${result.llmHighlightCacheHits}`);
-    console.log(`\u5b9e\u9645\u8c03\u7528 Highlights LLM \u6761\u6570: ${result.llmHighlightRequestedEntries}`);
-    console.log(`\u5b9e\u9645\u8c03\u7528 Highlights LLM \u6279\u6b21: ${result.llmHighlightRequestBatchCount}`);
+    console.log(`本轮抓取条数: ${result.newEntries}`);
+    console.log(`本轮新增条数: ${result.createdEntries}`);
+    console.log(`本轮刷新条数: ${result.refreshedEntries}`);
+    console.log(`当前总条数: ${result.totalEntries}`);
+    console.log(`日报路径: ${result.reportPath}`);
+    console.log(`中文翻译: ${result.translationEnabled ? `已启用 (${result.translationModel})` : "未启用"}`);
     console.log(
-      `Highlights Token \u6d88\u8017: \u8f93\u5165 ${result.llmHighlightUsage.inputTokens} | \u8f93\u51fa ${result.llmHighlightUsage.outputTokens} | \u5408\u8ba1 ${result.llmHighlightUsage.totalTokens}`
+      `LLM重点排序: ${result.llmHighlightScoringEnabled ? `已启用 (${result.llmHighlightModel})` : "未启用"}`
     );
-  }
-  if (result.createdEntryPreview.length > 0) {
-    console.log("\u65b0\u589e\u6761\u76ee\u9884\u89c8:");
-    for (const [index, entry] of result.createdEntryPreview.entries()) {
-      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.source}]`);
-    }
-  }
-  if (result.githubCreatedEntryPreview.length > 0) {
-    console.log("GitHub \u65b0\u589e\u9879\u76ee\u9884\u89c8:");
-    for (const [index, entry] of result.githubCreatedEntryPreview.entries()) {
-      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
-      if (entry.github) {
-        const stars = Number(entry.github.stars ?? 0);
-        const watchers = Number(entry.github.watchers ?? 0);
-        const forks = Number(entry.github.forks ?? 0);
-        const popularityScore = stars * 5 + forks * 3 + watchers;
-        console.log(
-          `   热度分: ${popularityScore} | Stars: ${entry.github.stars ?? "unknown"} | Watchers: ${entry.github.watchers ?? "unknown"} | Forks: ${entry.github.forks ?? "unknown"} | Contributors: ${entry.github.contributors ?? "unknown"}`
-        );
-        console.log(`   \u6700\u8fd1\u66f4\u65b0: ${entry.github.updatedAtCn ?? entry.github.updatedAt ?? entry.publishedAt ?? "unknown"}`);
+
+    if (result.translationEnabled) {
+      console.log(`已翻译条数: ${result.translatedEntries}`);
+      console.log(`跳过翻译条数: ${result.translationSkippedEntries}`);
+      console.log(`实际调用翻译 LLM 条数: ${result.translationRequestedEntries}`);
+      console.log(`实际调用翻译 LLM 批次: ${result.translationRequestBatchCount}`);
+      console.log(`已有中文字段跳过: ${result.translationExistingFieldSkips}`);
+      console.log(`翻译缓存命中: ${result.translationCacheHits}`);
+      console.log(`当天翻译失败缓存跳过: ${result.translationFailureCacheSkips}`);
+      console.log(`本轮翻译失败: ${result.translationFailedEntries}`);
+      console.log(
+        `翻译 Token 消耗: 输入 ${result.translationUsage.inputTokens} | 输出 ${result.translationUsage.outputTokens} | 合计 ${result.translationUsage.totalTokens}`
+      );
+      if (result.translationMissingContentSkips > 0) {
+        console.log(`缺少标题或摘要跳过: ${result.translationMissingContentSkips}`);
       }
     }
-  }
-  if (result.failures.length > 0) {
-    console.log(`\u5931\u8d25\u6e90\u6570\u91cf: ${result.failures.length}`);
-    for (const failure of result.failures) {
+
+    if (result.llmHighlightScoringEnabled) {
+      console.log(`LLM打分候选数: ${result.llmHighlightScoredCount}`);
+      console.log(`Highlights 缓存命中: ${result.llmHighlightCacheHits}`);
+      console.log(`实际调用 Highlights LLM 条数: ${result.llmHighlightRequestedEntries}`);
+      console.log(`实际调用 Highlights LLM 批次: ${result.llmHighlightRequestBatchCount}`);
       console.log(
-        `- ${failure.source}: ${failure.message} (\u7c7b\u578b: ${failure.category ?? "unknown"}, \u5c1d\u8bd5\u6b21\u6570: ${failure.attempts ?? 1})`
+        `Highlights Token 消耗: 输入 ${result.llmHighlightUsage.inputTokens} | 输出 ${result.llmHighlightUsage.outputTokens} | 合计 ${result.llmHighlightUsage.totalTokens}`
       );
     }
-  }
-  if (result.reportHighlightsPractice?.length > 0) {
-    console.log("实践类型今日重点预览:");
-    for (const [index, entry] of result.reportHighlightsPractice.entries()) {
-      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
-      if (entry.highlightReasonZh) {
-        console.log(`   入选理由: ${entry.highlightReasonZh}`);
+
+    if (result.createdEntryPreview.length > 0) {
+      console.log("新增条目预览:");
+      for (const [index, entry] of result.createdEntryPreview.entries()) {
+        console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.source}]`);
       }
     }
-  }
-  if (result.reportHighlightsNonGithub?.length > 0) {
-    console.log("新闻资讯今日重点预览:");
-    for (const [index, entry] of result.reportHighlightsNonGithub.entries()) {
-      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
-      if (entry.highlightReasonZh) {
-        console.log(`   \u5165\u9009\u7406\u7531: ${entry.highlightReasonZh}`);
+
+    if (result.githubCreatedEntryPreview.length > 0) {
+      console.log("GitHub 新增项目预览:");
+      for (const [index, entry] of result.githubCreatedEntryPreview.entries()) {
+        console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
+        if (entry.github) {
+          const stars = Number(entry.github.stars ?? 0);
+          const watchers = Number(entry.github.watchers ?? 0);
+          const forks = Number(entry.github.forks ?? 0);
+          const popularityScore = stars * 5 + forks * 3 + watchers;
+          console.log(
+            `   热度分: ${popularityScore} | Stars: ${entry.github.stars ?? "unknown"} | Watchers: ${entry.github.watchers ?? "unknown"} | Forks: ${entry.github.forks ?? "unknown"} | Contributors: ${entry.github.contributors ?? "unknown"}`
+          );
+          console.log(`   最近更新: ${entry.github.updatedAtCn ?? entry.github.updatedAt ?? entry.publishedAt ?? "unknown"}`);
+        }
       }
     }
-  }
-  if (result.reportHighlightsGithub?.length > 0) {
-    console.log("GitHub \u4eca\u65e5\u91cd\u70b9\u9884\u89c8:");
-    for (const [index, entry] of result.reportHighlightsGithub.entries()) {
-      const stars = Number(entry.github?.stars ?? 0);
-      const watchers = Number(entry.github?.watchers ?? 0);
-      const forks = Number(entry.github?.forks ?? 0);
-      const popularityScore = stars * 5 + forks * 3 + watchers;
-      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}] | \u70ed\u5ea6\u5206 ${popularityScore}`);
+
+    if (result.failures.length > 0) {
+      console.log(`失败源数量: ${result.failures.length}`);
+      for (const failure of result.failures) {
+        console.log(`- ${failure.source}: ${failure.message} (类型: ${failure.category ?? "unknown"}, 尝试次数: ${failure.attempts ?? 1})`);
+      }
     }
-  }
-  if (result.practiceReadGeneratedCount > 0) {
-    console.log("工程实践精读已生成:");
-    for (const [index, item] of result.practiceReadItems.entries()) {
-      console.log(`${index + 1}. ${item.title} -> ${item.path}`);
+
+    if (result.reportHighlightsPractice?.length > 0) {
+      console.log("实践类型今日重点预览:");
+      for (const [index, entry] of result.reportHighlightsPractice.entries()) {
+        console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
+        if (entry.highlightReasonZh) {
+          console.log(`   入选理由: ${entry.highlightReasonZh}`);
+        }
+      }
     }
-    console.log(
-      `实践精读 Token 消耗: 输入 ${result.practiceReadUsage.inputTokens} | 输出 ${result.practiceReadUsage.outputTokens} | 合计 ${result.practiceReadUsage.totalTokens}`
-    );
+
+    if (result.reportHighlightsNonGithub?.length > 0) {
+      console.log("新闻资讯今日重点预览:");
+      for (const [index, entry] of result.reportHighlightsNonGithub.entries()) {
+        console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}]`);
+        if (entry.highlightReasonZh) {
+          console.log(`   入选理由: ${entry.highlightReasonZh}`);
+        }
+      }
+    }
+
+    if (result.reportHighlightsGithub?.length > 0) {
+      console.log("GitHub 今日重点预览:");
+      for (const [index, entry] of result.reportHighlightsGithub.entries()) {
+        const stars = Number(entry.github?.stars ?? 0);
+        const watchers = Number(entry.github?.watchers ?? 0);
+        const forks = Number(entry.github?.forks ?? 0);
+        const popularityScore = stars * 5 + forks * 3 + watchers;
+        console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.category}] | 热度分 ${popularityScore}`);
+      }
+    }
+
+    if (result.practiceReadGeneratedCount > 0) {
+      console.log("工程实践精读已生成:");
+      for (const [index, item] of result.practiceReadItems.entries()) {
+        console.log(`${index + 1}. ${item.title} -> ${item.path}`);
+      }
+      console.log(
+        `实践精读 Token 消耗: 输入 ${result.practiceReadUsage.inputTokens} | 输出 ${result.practiceReadUsage.outputTokens} | 合计 ${result.practiceReadUsage.totalTokens}`
+      );
+    }
   }
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
 }
 
+async function handleFavoritesCommand(options) {
+  if (options.listFavorites) {
+    const favorites = await loadFavorites();
+    console.log(renderFavoriteList(favorites));
+    return;
+  }
+
+  if (options.unfavoriteTarget) {
+    const removed = await removeFavorite(options.unfavoriteTarget);
+    if (removed > 0) {
+      console.log(`已取消收藏 ${removed} 条。`);
+    } else {
+      console.log("没有找到匹配的收藏条目。");
+    }
+    return;
+  }
+
+  const store = await loadStore();
+  const { matches } = findEntryForFavorite(store.entries ?? [], options.favoriteTarget);
+
+  if (matches.length === 0) {
+    console.log("没有在本地库存里找到匹配条目。你可以传完整链接、id、原标题或中文标题。");
+    return;
+  }
+
+  if (matches.length > 1) {
+    console.log("匹配到多条内容，请给更精确一点的链接或标题：");
+    for (const [index, entry] of matches.entries()) {
+      console.log(`${index + 1}. ${entry.titleZh ?? entry.title} [${entry.source}]`);
+      console.log(`   ${entry.url}`);
+    }
+    return;
+  }
+
+  const saved = await addFavorite(matches[0]);
+  console.log(`已收藏: ${saved.titleZh ?? saved.title}`);
+  console.log(`来源: ${saved.source}`);
+  console.log(`原文: ${saved.url}`);
+}
+
 function parseArgs(args) {
   const options = {
     verbose: false,
     sourceFilters: [],
-    tagFilters: []
+    tagFilters: [],
+    favoriteTarget: null,
+    unfavoriteTarget: null,
+    listFavorites: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -155,6 +204,33 @@ function parseArgs(args) {
 
     if (arg.startsWith("--tag=")) {
       options.tagFilters.push(arg.slice("--tag=".length));
+      continue;
+    }
+
+    if (arg === "--favorite" && args[index + 1]) {
+      options.favoriteTarget = args[index + 1];
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--favorite=")) {
+      options.favoriteTarget = arg.slice("--favorite=".length);
+      continue;
+    }
+
+    if (arg === "--unfavorite" && args[index + 1]) {
+      options.unfavoriteTarget = args[index + 1];
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--unfavorite=")) {
+      options.unfavoriteTarget = arg.slice("--unfavorite=".length);
+      continue;
+    }
+
+    if (arg === "--favorites") {
+      options.listFavorites = true;
     }
   }
 

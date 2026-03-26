@@ -33,6 +33,7 @@ import {
   pickHighlightCandidates,
   scoreHighlightCandidates
 } from "./highlight-scorer.mjs";
+import { loadFavorites } from "./favorites.mjs";
 import { generatePracticeReads } from "./practice-reads.mjs";
 import { getTranslationConfig, translateEntries } from "./translator.mjs";
 
@@ -388,6 +389,9 @@ function appendNonGithubHighlight(lines, entry, index) {
   lines.push(
     `   来源：${entry.source} | 分类：${entry.category} | 发布时间：${formatEntryDisplayTime(entry)}`
   );
+  if (entry.isFavorited) {
+    lines.push("   收藏状态：★ 已收藏");
+  }
   if (entry.rankChangeLabel) {
     lines.push(`   排名变化：${entry.rankChangeLabel}`);
   }
@@ -411,6 +415,9 @@ function appendGithubHighlight(lines, entry, index) {
   lines.push(
     `   分类：${entry.category} | 热度分：${getGitHubPopularityScore(entry)} | 来源：${entry.source} | 最近更新：${entry.github?.updatedAtCn ?? formatEntryDisplayTime(entry)}`
   );
+  if (entry.isFavorited) {
+    lines.push("   收藏状态：★ 已收藏");
+  }
   if (entry.rankChangeLabel) {
     lines.push(`   排名变化：${entry.rankChangeLabel}`);
   }
@@ -438,6 +445,13 @@ function groupEntriesBySource(entries) {
   return [...groups.entries()]
     .map(([source, sourceEntries]) => [source, sourceEntries.slice().sort(compareSourceEntries)])
     .sort((left, right) => right[1].length - left[1].length || left[0].localeCompare(right[0]));
+}
+
+function applyFavoriteFlags(entries, favoriteIds) {
+  return entries.map((entry) => ({
+    ...entry,
+    isFavorited: favoriteIds.has(entry.id)
+  }));
 }
 
 function compareSourceEntries(left, right) {
@@ -636,6 +650,9 @@ async function writeSourceReports(sourceGroups, { reportDir, dateSlug }) {
       lines.push(`- 发布时间: ${formatEntryDisplayTime(entry)}`);
       lines.push(`- 分类: ${entry.category}`);
       lines.push(`- 标签: ${entry.tags.join(", ") || "none"}`);
+      if (entry.isFavorited) {
+        lines.push(`- 收藏状态: ★ 已收藏`);
+      }
       if (isGitHubEntry(entry) && entry.github) {
         lines.push(`- 热度分: ${getGitHubPopularityScore(entry)}`);
         lines.push(
@@ -1137,7 +1154,12 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   const reportDir = path.join(REPORTS_DIR, reportId);
   await ensureDir(reportDir);
   const reportPath = path.join(reportDir, "overview.md");
-  const recentEntries = entries.filter((entry) => localDateSlugFromValue(entry.fetchedAt) === dateSlug);
+  const favorites = await loadFavorites();
+  const favoriteIds = new Set((favorites.items ?? []).map((item) => item.id));
+  const recentEntries = applyFavoriteFlags(
+    entries.filter((entry) => localDateSlugFromValue(entry.fetchedAt) === dateSlug),
+    favoriteIds
+  );
   const nonGithubEntries = recentEntries.filter((entry) => !isGitHubEntry(entry));
   const practiceEntries = nonGithubEntries.filter((entry) => isPracticeEntry(entry));
   const nonGithubGeneralEntries = nonGithubEntries.filter((entry) => !isPracticeEntry(entry));

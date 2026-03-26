@@ -1,0 +1,56 @@
+{
+  "updatedAt": "2026-03-26T16:31:34.935Z",
+  "items": [
+    {
+      "id": "https://github.com/yamadashy/repomix",
+      "url": "https://github.com/yamadashy/repomix",
+      "title": "yamadashy/repomix",
+      "titleZh": "Repomix：代码仓库打包成 AI 友好格式的工具",
+      "summary": "📦 Repomix is a powerful tool that packs your entire repository into a single, AI-friendly file. Perfect for when you need to feed your codebase to Large Language Models (LLMs) or other AI tools like Claude, ChatGPT, Dee",
+      "summaryZh": "Repomix 是一款强大的工具，可将整个代码仓库打包成单个 AI 友好文件，非常适合将代码库喂给 Claude、ChatGPT、Dee 等大型语言模型或其他 AI 工具使用。",
+      "source": "GitHub Rising AI",
+      "category": "Models",
+      "publishedAt": "2026-03-26T14:34:38Z",
+      "favoritedAt": "2026-03-26T16:31:34.934Z",
+      "updatedAt": "2026-03-26T16:31:34.935Z",
+      "tags": [
+        "github",
+        "open-source",
+        "rising"
+      ],
+      "github": {
+        "fullName": "yamadashy/repomix",
+        "language": "TypeScript",
+        "stars": 22660,
+        "watchers": 22660,
+        "forks": 1054,
+        "openIssues": 152,
+        "contributors": 3,
+        "updatedAt": "2026-03-26T14:34:38Z",
+        "updatedAtCn": "2026/3/26 22:34:38",
+        "topics": [
+          "ai",
+          "anthropic",
+          "artificial-intelligence",
+          "chatbot",
+          "chatgpt",
+          "claude",
+          "deepseek",
+          "developer-tools",
+          "gemini",
+          "genai",
+          "generative-ai",
+          "gpt",
+          "javascript",
+          "language-model",
+          "llama",
+          "llm",
+          "mcp",
+          "nodejs",
+          "openai",
+          "typescript"
+        ]
+      }
+    }
+  ]
+}

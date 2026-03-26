@@ -1,307 +1,395 @@
 # AI Context
 
-This file is an AI-oriented handoff document for the `ai-news-pipeline` project.
-It is intended for future use by other models, coding agents, or automation tools.
+This file is the current AI-oriented handoff document for the `DailyReport` project.
+It is meant for future coding agents, automation tools, or other models that need fast onboarding.
 
 ## 1. Project purpose
 
-This project builds a local AI news collection pipeline.
+This project builds a local AI information pipeline with Chinese report output.
 
-Current capabilities:
-- Collect AI-related content from configured sources
-- Normalize and store entries locally
-- Translate title and summary to Chinese with LLMs
-- Score and rank report highlights with LLMs
-- Generate Markdown reports
-- Cache translation and highlight results locally by day
+It currently does all of the following:
+
+- Collects AI-related content from configured sources
+- Normalizes and stores entries locally by day
+- Translates title and summary to Chinese
+- Re-ranks highlights with LLM scoring
+- Generates split hourly reports
+- Generates practice deep reads with images
+- Supports local favorites that can be synced through Git
 
 Primary user goal:
-- Run the pipeline locally on Windows by double-clicking `run_pipeline.bat`
-- Later keep extending the pipeline while preserving low-friction local use
+- Use the project locally with low friction
+- Keep extending it gradually
+- Prefer practical output over architectural complexity
 
 ## 2. Runtime and entrypoints
 
 Tech stack:
 - Node.js
 - ESM modules (`.mjs`)
-- Local JSON files for config/data/cache
+- Local JSON + Markdown files
 
 Main entrypoints:
-- [bootstrap.mjs](F:/CodexProject/src/bootstrap.mjs)
-  - Loads local env file, then imports main entry
-- [main.mjs](F:/CodexProject/src/main.mjs)
+- `src/bootstrap.mjs`
+  - Loads `.env.local`, then enters the app
+- `src/main.mjs`
   - CLI entry
-  - Parses `--verbose`, `--source`, `--tag`
-  - Prints terminal summary
-- [run_pipeline.bat](F:/CodexProject/run_pipeline.bat)
-  - Double-click launcher
-- [run_pipeline.ps1](F:/CodexProject/run_pipeline.ps1)
-  - Actual Windows runner with terminal output and log capture
+  - Supports pipeline and favorites commands
+- `run_pipeline.bat`
+  - Main double-click launcher
+- `run_pipeline.ps1`
+  - Real Windows runner with log capture
 
-Useful npm scripts:
+Useful scripts:
 - `npm run run:pipeline`
 - `npm run run:pipeline:verbose`
 - `npm run run:pipeline:github`
 - `npm run run:pipeline:github:verbose`
 
-## 3. High-level data flow
+## 3. Current CLI features
 
-Pipeline flow:
-1. Load config and enabled sources
-2. Fetch source content
-3. Normalize items into internal entries
-4. Merge with local store
-5. Translate title/summary if configured
-6. Re-rank report highlights with LLM if configured
-7. Write hourly report under daily folder
-8. Save daily cache
+Pipeline:
+- normal run
+- verbose run
+- source filtering
+- tag filtering
 
-Core orchestrator:
-- [pipeline.mjs](F:/CodexProject/src/lib/pipeline.mjs)
+Favorites:
+- `node src/main.mjs --favorite "link or title"`
+- `node src/main.mjs --favorites`
+- `node src/main.mjs --unfavorite "link or title"`
 
-## 4. Config files
+Favorites are intentionally stored in a Git-trackable path so they can sync across devices.
 
-All user-facing config files are intentionally centralized in:
-- [config](F:/CodexProject/config)
+## 4. Config layout
 
-Main config files:
-- [project.config.mjs](F:/CodexProject/config/project.config.mjs)
-  - Global defaults
-  - Paths
-  - Network timeouts
-  - Retry counts
-  - Cache retention
-  - Default model values
-- [sources.json](F:/CodexProject/config/sources.json)
-  - Active source list
-  - Per-source `enabled` switch
-- [sources.example.json](F:/CodexProject/config/sources.example.json)
-  - Template/examples for adding sources
-- [.env.local](F:/CodexProject/config/.env.local)
-  - Private local secrets and provider overrides
-- [.env.example](F:/CodexProject/config/.env.example)
-  - Template for `.env.local`
+All user-facing config lives under:
+- `config/`
+
+Important files:
+- `config/project.config.mjs`
+  - paths
+  - network defaults
+  - retry counts
+  - cache retention
+  - highlight repeat-entry penalties
+  - practice read defaults
+- `config/sources.json`
+  - real source list
+- `config/sources.example.json`
+  - source template and supported source types
+- `config/.env.local`
+  - private secrets and model overrides
+- `config/.env.example`
+  - safe template
 
 Important note:
-- `config/.env.local` is gitignored and should not be committed
+- `config/.env.local` must not be committed
 
-## 5. Current source types
+## 5. Supported source types
 
-Currently supported source types:
+Currently supported:
 - `rss`
 - `github-api-search`
+- `anthropic-news-html`
+- `huggingface-blog-html`
+- `google-cloud-blog-html`
 
-Current production sources live in:
-- [sources.json](F:/CodexProject/config/sources.json)
-
-Each source supports:
-- `name`
-- `enabled`
-- `type`
-- `url`
-- `limit`
-- `priority`
-- `tags`
-
-Source loading behavior:
-- `enabled: false` means the source stays in config but is skipped
-- Disabled sources are reported in verbose startup output
+Representative production sources:
+- OpenAI News
+- Anthropic News
+- Anthropic Engineering
+- Anthropic Research
+- Google AI Blog
+- Google Developers AI
+- Google Cloud Developers
+- Hugging Face Blog
+- Hacker News AI
+- arXiv cs.AI
+- GitHub Rising AI
+- GitHub AI Topic
 
 ## 6. Storage layout
 
-Local data:
-- [entries.json](F:/CodexProject/data/entries.json)
-  - Long-lived merged item store
-  - One entry per unique item id
-  - Entry id is usually the source URL/link
+Daily entries:
+- `data/entries/`
+  - one JSON file per day
 
 Daily LLM cache:
-- [llm-cache](F:/CodexProject/data/llm-cache)
-  - One JSON file per day, e.g. `2026-03-22.json`
-  - Stores both:
-    - `translations`
-    - `highlights`
-  - Old cache is automatically pruned
-  - Retention default: 7 days
+- `data/llm-cache/`
+  - one JSON file per day
+  - stores translation cache
+  - stores highlight scoring cache
+  - stores same-day translation failure cache
+
+Practice deep-read history:
+- `data/practice-reads/history.json`
+
+Favorites:
+- `data/favorites/favorites.json`
+- `data/favorites/index.md`
 
 Reports:
-- [reports](F:/CodexProject/reports)
-  - Reports are grouped by day
-  - Current structure:
-    - `reports/YYYY-MM-DD/YYYY-MM-DD_HH.md`
+- `reports/`
+  - one folder per hour
+  - example:
+    - `reports/YYYY-MM-DD_HH/overview.md`
+    - `reports/YYYY-MM-DD_HH/sources/*.md`
+    - `reports/YYYY-MM-DD_HH/practice-reads/*.md`
 
 Logs:
-- [logs](F:/CodexProject/logs)
+- `logs/`
 
 ## 7. Core modules
 
-Main library modules:
-- [pipeline.mjs](F:/CodexProject/src/lib/pipeline.mjs)
-  - Source loading
-  - Fetch loop
-  - Merge/store
-  - Report writing
-  - GitHub ordering logic
-- [translator.mjs](F:/CodexProject/src/lib/translator.mjs)
-  - Translation provider selection
-  - Batch translation
-  - Translation cache integration
-- [highlight-scorer.mjs](F:/CodexProject/src/lib/highlight-scorer.mjs)
-  - Highlight candidate selection
+Main modules:
+- `src/lib/pipeline.mjs`
+  - source loading
+  - fetch loop
+  - merge/store
+  - report generation
+  - ranking
+  - ranking change tracking
+  - favorite flag projection into reports
+- `src/lib/translator.mjs`
+  - translation provider selection
+  - translation batching
+  - translation cache integration
+  - same-day failure skip behavior
+- `src/lib/highlight-scorer.mjs`
+  - highlight candidate selection
   - LLM scoring
-  - Highlight cache integration
-- [llm-cache.mjs](F:/CodexProject/src/lib/llm-cache.mjs)
-  - Daily per-file cache load/save
-  - Legacy cache migration
-  - Retention pruning
-- [github-api.mjs](F:/CodexProject/src/lib/github-api.mjs)
-  - Parses GitHub Search API results
-  - Enriches contributor counts
-- [rss.mjs](F:/CodexProject/src/lib/rss.mjs)
-  - RSS/Atom parsing
-- [text-utils.mjs](F:/CodexProject/src/lib/text-utils.mjs)
-  - Summary generation
-  - Categorization
-  - Date/hour slug generation
-- [http-utils.mjs](F:/CodexProject/src/lib/http-utils.mjs)
-  - HTTP GET helpers
+  - highlight cache integration
+- `src/lib/practice-reads.mjs`
+  - practice deep-read generation
+  - image generation
+  - explanatory visuals
+  - sections like:
+    - one-sentence takeaway
+    - what problem it solves
+    - plain explanation
+    - what they actually built
+    - workflow
+    - what to learn
+    - where to apply
+    - when to use
+- `src/lib/favorites.mjs`
+  - favorite load/save
+  - favorite index generation
+  - matching by link/title
+- `src/lib/llm-cache.mjs`
+  - daily cache read/write
+  - pruning by retention days
+- `src/lib/github-api.mjs`
+  - GitHub repository parsing and enrichment
+- `src/lib/google-cloud-blog.mjs`
+  - Google Cloud Developers & Practitioners page parsing
+- `src/lib/anthropic-news.mjs`
+  - Anthropic HTML parsing
+- `src/lib/text-utils.mjs`
+  - summaries
+  - date/hour slugs
+  - scoring helpers
+  - categorization
+  - text cleanup
 
-## 8. Current ranking behavior
+## 8. Report structure
+
+Main overview report currently contains:
+- header
+- `实践类型 Top 10`
+- `新闻资讯 Top 20`
+- `GitHub Rising AI Top 10`
+- `GitHub AI Topic Top 10`
+- source overview
+- practice deep-read entry
+- failures if any
+
+Source details are split into per-source files.
+
+Practice deep reads live in a sibling folder under the same hourly report.
+
+## 9. Ranking behavior
 
 ### General entries
 
-Base rule score is generated in:
-- [text-utils.mjs](F:/CodexProject/src/lib/text-utils.mjs)
+Base rule score is created in:
+- `src/lib/text-utils.mjs`
 
 Signals include:
-- Source priority
-- Certain keywords like releases/research/open source
+- source priority
+- product/release keywords
+- research keywords
+- open-source keywords
+- extra practice-oriented signals
 
-### Highlights
+### Highlight ranking
 
-Highlights are selected in two stages:
-1. Rule-based preselection
-2. LLM re-ranking
+Highlights are selected in two phases:
+1. rule-based preselection
+2. LLM reranking
 
-Highlight scoring logic:
-- [highlight-scorer.mjs](F:/CodexProject/src/lib/highlight-scorer.mjs)
+Display score blends:
+- rule score
+- LLM score
 
-### GitHub ordering
+### Freshness bias
 
-GitHub items are intentionally sorted differently from general entries.
+To prevent old items from dominating every run:
+- repeated entries from the previous leaderboard receive a small penalty
+- this is configurable in:
+  - `config/project.config.mjs`
 
-GitHub section ordering currently uses a weighted popularity score:
+Current knobs:
+- `highlights.repeatEntryScorePenalty`
+- `highlights.repeatGithubScorePenaltyRatio`
+
+### Rank-change labels
+
+Current report items may show:
+- `NEW`
+- `=`
+- `↑N`
+- `↓N`
+
+These compare the current leaderboard with the previous hourly report’s same section.
+
+## 10. GitHub-specific behavior
+
+GitHub is intentionally treated separately.
+
+Current split:
+- `GitHub Rising AI`
+  - recently updated AI repos with minimum quality threshold
+- `GitHub AI Topic`
+  - high-star long-term AI repos
+
+GitHub ranking uses weighted popularity:
 - `stars * 5 + forks * 3 + watchers`
 
-If popularity ties:
-- More recent updates come first
+Reports also show:
+- stars
+- forks
+- watchers
+- contributors
+- recent update time
+- popularity score
 
-This affects:
-- GitHub section ordering in report
-- GitHub preview ordering in terminal output
-
-## 9. Current translation behavior
-
-Translation is optional and provider-driven.
+## 11. Translation behavior
 
 Supported providers:
 - OpenAI
 - MiniMax
 
-Selection logic:
-- If `OPENAI_API_KEY` exists, OpenAI is preferred
-- Otherwise if `MINIMAX_API_KEY` exists, MiniMax is used
-- If neither exists, translation is skipped
-
 Translation behavior:
-- Only translates entries that do not already have Chinese fields
-- Same-day cache can satisfy repeated requests
-- Current MiniMax usage is optimized for smaller batches
+- only translates entries missing Chinese fields
+- same-day translation cache is reused
+- same-day failures are cached and skipped
+- MiniMax is tuned for smaller, more stable batch sizes
 
-Important files:
-- [translator.mjs](F:/CodexProject/src/lib/translator.mjs)
-- [project.config.mjs](F:/CodexProject/config/project.config.mjs)
-- [.env.local](F:/CodexProject/config/.env.local)
+## 12. Practice deep reads
 
-## 10. Report format
+Practice deep reads are an important feature now.
 
-Report writer:
-- [pipeline.mjs](F:/CodexProject/src/lib/pipeline.mjs)
+Behavior:
+- choose up to 2 unseen practice articles per run
+- avoid repeating already-read articles using persistent history
+- generate Chinese deep-read markdown
+- generate 0-3 explanatory visuals
+- avoid decorative cover-only visuals
+- place visuals near relevant sections
 
-Current report includes:
-- Daily summary header
-- Highlight section
-- Category sections
-- Dedicated `GitHub / Open Source` section
-- GitHub-specific metadata:
-  - popularity score
-  - stars
-  - watchers
-  - forks
-  - open issues
-  - contributors
-  - recent update
-  - primary language
+Important deep-read sections now include:
+- first takeaway
+- what problem it solves
+- plain explanation
+- analogy
+- why it matters
+- what they actually built
+- workflow
+- concrete example
+- what to learn
+- where to apply
+- when to use
+- key points
+- takeaways
+- glossary
 
-## 11. Conventions and important project decisions
+## 13. Favorites
 
-Project decisions already made:
-- Config files are centralized under `config/`
-- Reports are grouped by day, then hour
-- LLM cache is stored by day, one file per day
-- Source config supports `enabled` toggles
-- GitHub items are ranked by popularity, not raw fetch order
-- Terminal output is Chinese-first
-- Prefer local JSON and simple filesystem storage over database complexity
+Favorites are now a first-class feature.
 
-Do not casually change these without a clear reason:
-- Report folder structure
-- Cache retention and cache key semantics
-- Source id behavior based on URL
-- Windows double-click runner flow
+Purpose:
+- allow the user to permanently keep important items
+- make favorites portable across devices through Git
 
-## 12. Testing and verification preference
+Behavior:
+- favorites are saved as snapshots, independent of daily reports
+- reports mark favorited items as:
+  - `收藏状态：★ 已收藏`
+- `data/favorites/` is intentionally allowed through `.gitignore`
 
-Important user preference:
-- Do not run the full pipeline unnecessarily during development
-- Prefer the smallest relevant verification scope
+## 14. Important project decisions
+
+Current stable design choices:
+- config files live under `config/`
+- entries are stored by day
+- LLM cache is stored by day
+- reports are stored by hour folder
+- source detail pages are split from overview
+- practice reads are split from overview
+- favorites are tracked separately from daily entries
+- terminal output is Chinese-first
+- prefer local JSON/Markdown over database complexity for now
+
+Do not casually change:
+- hourly report folder structure
+- favorite storage path semantics
+- entry id behavior based on URL
+- same-day cache behavior
+- Windows double-click launcher flow
+
+## 15. Testing preference
+
+Strong user preference:
+- avoid full pipeline runs unless genuinely necessary
+- prefer the smallest relevant validation scope
 
 Examples:
-- If changing GitHub logic, prefer:
-  - `npm run run:pipeline:github`
-  - or `npm run run:pipeline:github:verbose`
-- Only run broader tests when changing shared/global pipeline behavior
+- GitHub change -> only test GitHub
+- practice-read change -> only test practice-read module
+- report rendering change -> use offline regeneration if possible
 
-This preference exists to reduce:
-- unnecessary runtime
-- unnecessary API usage
-- unnecessary MiniMax usage
+Reason:
+- save runtime
+- save token usage
+- reduce noise
 
-## 13. Known rough edges
+## 16. Current rough edges
 
-Current rough edges worth knowing:
-- Some files in the repo show legacy encoding artifacts in comments or older docs
-- MiniMax sometimes returns malformed JSON; parsing has partial recovery and graceful fallback
-- README is not the best canonical source right now
-- `AI_CONTEXT.md` should be treated as the clearer AI-oriented handoff document
+Known rough edges:
+- some legacy files still show historical encoding artifacts
+- MiniMax can still produce malformed JSON occasionally
+- README used to be outdated; this file and the new README are now the preferred references
+- OpenAI developer/research pages are harder to collect programmatically due to anti-bot protection
 
-## 14. Suggested extension points
+## 17. Good next extension points
 
-Good next changes for future agents:
-- Add more source types beyond RSS and GitHub API
-- Improve highlight ranking with more explicit dimensions
-- Add source-specific filters or quality gates
-- Improve translation quality and retry logic
-- Add delivery channels like email/Feishu/Obsidian export
-- Add better cache observability and stats
+Likely future improvements:
+- stronger event deduplication and event merging
+- more personalized ranking preferences
+- delivery to Feishu / email / Obsidian
+- server deployment automation
+- better quality filters for weak summaries and low-signal GitHub repos
 
-## 15. Safe first reads for a new model
+## 18. Best onboarding order for another model
 
-If another model is dropped into this repo, the fastest onboarding sequence is:
-1. Read [AI_CONTEXT.md](F:/CodexProject/AI_CONTEXT.md)
-2. Read [project.config.mjs](F:/CodexProject/config/project.config.mjs)
-3. Read [sources.json](F:/CodexProject/config/sources.json)
-4. Read [pipeline.mjs](F:/CodexProject/src/lib/pipeline.mjs)
-5. Read [translator.mjs](F:/CodexProject/src/lib/translator.mjs)
-6. Read [highlight-scorer.mjs](F:/CodexProject/src/lib/highlight-scorer.mjs)
-7. Use the smallest possible verification command
+If another model is dropped into this repo, the fastest read order is:
+1. `AI_CONTEXT.md`
+2. `config/project.config.mjs`
+3. `config/sources.json`
+4. `src/lib/pipeline.mjs`
+5. `src/lib/practice-reads.mjs`
+6. `src/lib/translator.mjs`
+7. `src/lib/highlight-scorer.mjs`
+8. Then run the smallest possible verification command
