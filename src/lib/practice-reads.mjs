@@ -16,6 +16,8 @@ const VISUAL_SECTION_KEYS = new Set([
   "built",
   "workflow",
   "example",
+  "what_to_learn",
+  "where_to_apply",
   "when_to_use",
   "takeaways"
 ]);
@@ -232,6 +234,8 @@ async function requestMiniMaxDeepRead({ entry, article, config }) {
               what_they_actually_built: "作者到底做了什么，重点讲结构、关键组件、真实做法。",
               workflow_steps: "3-6 条步骤数组，按真实流程拆开。",
               concrete_example: "给一个具体、贴近真实使用的例子。",
+              what_to_learn: "3-5 条数组。站在读者角度总结：我到底该学什么方法、习惯、判断标准或实践动作。尽量具体，可迁移，可执行，不要空话。",
+              where_to_apply: "2-4 条数组。告诉读者这些方法、思路或设计模式可以落地到哪些具体工作场景里，尽量写得接地气。",
               when_to_use: "什么场景适合用，什么场景不适合用。",
               key_points: "3-5 条关键要点数组，像人类读完后的重点笔记。",
               takeaways: "2-4 条最值得记住的结论。",
@@ -243,7 +247,7 @@ async function requestMiniMaxDeepRead({ entry, article, config }) {
               ],
               visuals: [
                 {
-                  section_key: "problem/explanation/analogy/built/workflow/example/when_to_use/takeaways",
+                  section_key: "problem/explanation/analogy/built/workflow/example/what_to_learn/where_to_apply/when_to_use/takeaways",
                   title_zh: "这张图在解释什么",
                   purpose_zh: "一句中文说明，这张图会帮助读者理解哪件事",
                   image_prompt: "English prompt for the image model. Generate a clean explanatory diagram, workflow map, architecture diagram, or comparison graphic that matches the article. Prefer no words inside the image. Do not use paragraphs, code, UI screenshots, or small labels. Do not generate cover art, robot faces, neon brains, or generic sci-fi backgrounds. Use large simple shapes, arrows, and visual grouping so the picture is readable even without text."
@@ -287,6 +291,8 @@ async function requestMiniMaxDeepRead({ entry, article, config }) {
     whatTheyActuallyBuilt: String(parsed.what_they_actually_built || "").trim(),
     workflowSteps: normalizeStringArray(parsed.workflow_steps),
     concreteExample: String(parsed.concrete_example || "").trim(),
+    whatToLearn: normalizeStringArray(parsed.what_to_learn),
+    whereToApply: normalizeStringArray(parsed.where_to_apply),
     whenToUse: String(parsed.when_to_use || "").trim(),
     keyPoints: normalizeStringArray(parsed.key_points),
     takeaways: normalizeStringArray(parsed.takeaways),
@@ -357,6 +363,27 @@ function renderPracticeReadMarkdown(entry, deepRead, visuals) {
   }
 
   appendSection(lines, "一个具体例子", deepRead.concreteExample, visualsBySection.get("example"));
+
+  if (deepRead.whatToLearn.length > 0) {
+    lines.push("## 我该学什么");
+    lines.push("");
+    appendVisualBlock(lines, visualsBySection.get("what_to_learn"));
+    for (const item of deepRead.whatToLearn) {
+      lines.push(`- ${item}`);
+    }
+    lines.push("");
+  }
+
+  if (deepRead.whereToApply.length > 0) {
+    lines.push("## 可落地在哪");
+    lines.push("");
+    appendVisualBlock(lines, visualsBySection.get("where_to_apply"));
+    for (const item of deepRead.whereToApply) {
+      lines.push(`- ${item}`);
+    }
+    lines.push("");
+  }
+
   appendSection(lines, "什么场景适合用，什么场景别急着用", deepRead.whenToUse, visualsBySection.get("when_to_use"));
 
   if (deepRead.keyPoints.length > 0) {
