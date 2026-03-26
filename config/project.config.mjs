@@ -72,6 +72,12 @@ export const APP_CONFIG = {
   highlights: {
     // 送给大模型重排的候选数。
     maxCandidates: 10,
+    // 如果一条内容上一次已经进过同类榜单，这次会固定扣掉多少分。
+    // 数值越大，榜单越倾向于把新消息顶到前面。
+    repeatEntryScorePenalty: 6,
+    // GitHub 榜单不做固定扣分，而是按热度分做一个轻微比例扣减。
+    // 例如 0.03 代表已上榜项目这次会扣掉约 3% 的热度分。
+    repeatGithubScorePenaltyRatio: 0.03,
     openai: {
       defaultBaseUrl: "https://api.openai.com/v1",
       defaultModel: "gpt-4o-mini"

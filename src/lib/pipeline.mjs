@@ -44,6 +44,8 @@ const MAX_FETCH_ATTEMPTS = APP_CONFIG.pipeline.maxFetchAttempts;
 const NON_GITHUB_HIGHLIGHT_LIMIT = 20;
 const PRACTICE_HIGHLIGHT_LIMIT = 10;
 const GITHUB_HIGHLIGHT_LIMIT = 10;
+const REPEAT_ENTRY_SCORE_PENALTY = APP_CONFIG.highlights.repeatEntryScorePenalty;
+const REPEAT_GITHUB_SCORE_PENALTY_RATIO = APP_CONFIG.highlights.repeatGithubScorePenaltyRatio;
 const PRACTICE_SOURCE_NAMES = new Set([
   "Anthropic Engineering",
   "Anthropic Research",
@@ -386,6 +388,9 @@ function appendNonGithubHighlight(lines, entry, index) {
   lines.push(
     `   来源：${entry.source} | 分类：${entry.category} | 发布时间：${formatEntryDisplayTime(entry)}`
   );
+  if (entry.rankChangeLabel) {
+    lines.push(`   排名变化：${entry.rankChangeLabel}`);
+  }
   lines.push(`   评分：最终 ${getEntryDisplayScore(entry)} | 规则 ${entry.score ?? 0} | LLM ${Number(entry.llmScore ?? 0)}`);
   lines.push(`   核心摘要：${entry.highlightSummaryZh ?? entry.summaryZh ?? entry.summary}`);
   if (entry.highlightReasonZh) {
@@ -406,6 +411,9 @@ function appendGithubHighlight(lines, entry, index) {
   lines.push(
     `   分类：${entry.category} | 热度分：${getGitHubPopularityScore(entry)} | 来源：${entry.source} | 最近更新：${entry.github?.updatedAtCn ?? formatEntryDisplayTime(entry)}`
   );
+  if (entry.rankChangeLabel) {
+    lines.push(`   排名变化：${entry.rankChangeLabel}`);
+  }
   if (entry.github) {
     lines.push(
       `   关键指标：Stars ${entry.github.stars ?? "unknown"} | Forks ${entry.github.forks ?? "unknown"} | Watchers ${entry.github.watchers ?? "unknown"} | Contributors ${entry.github.contributors ?? "unknown"}`
@@ -464,6 +472,143 @@ function slugifySourceName(value) {
 
 function formatEntryDisplayTime(entry) {
   return formatBeijingTime(entry.publishedAt ?? entry.fetchedAt ?? "") || "unknown";
+}
+
+function getSectionKeyFromHeading(heading) {
+  if (heading.startsWith("实践类型 Top ")) {
+    return "practice";
+  }
+  if (heading.startsWith("新闻资讯 Top ")) {
+    return "news";
+  }
+  if (heading.startsWith("GitHub Rising AI Top ")) {
+    return "github-rising";
+  }
+  if (heading.startsWith("GitHub AI Topic Top ")) {
+    return "github-topic";
+  }
+  return "";
+}
+
+function buildRankChangeLabel(previousRank, currentRank) {
+  if (!Number.isFinite(previousRank)) {
+    return "NEW";
+  }
+  if (previousRank === currentRank) {
+    return "=";
+  }
+  if (previousRank > currentRank) {
+    return `↑${previousRank - currentRank}`;
+  }
+  return `↓${currentRank - previousRank}`;
+}
+
+function applyRankChanges(entries, previousRanks) {
+  return entries.map((entry, index) => ({
+    ...entry,
+    rankChangeLabel: buildRankChangeLabel(previousRanks.get(entry.url), index + 1)
+  }));
+}
+
+function rerankEntriesWithRepeatPenalty(entries, previousRanks, scoreGetter, penaltyGetter) {
+  return entries
+    .map((entry) => {
+      const baseScore = Number(scoreGetter(entry) ?? 0);
+      const wasRankedBefore = previousRanks.has(entry.url);
+      const repeatPenalty = wasRankedBefore ? Number(penaltyGetter(entry, baseScore) ?? 0) : 0;
+      return {
+        ...entry,
+        rerankScore: Math.max(0, baseScore - repeatPenalty),
+        repeatPenalty
+      };
+    })
+    .sort((left, right) => {
+      const scoreDiff = Number(right.rerankScore ?? 0) - Number(left.rerankScore ?? 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      return String(right.publishedAt ?? right.fetchedAt ?? "").localeCompare(String(left.publishedAt ?? left.fetchedAt ?? ""));
+    });
+}
+
+function rerankGithubEntriesWithRepeatPenalty(entries, previousRanks) {
+  return entries
+    .map((entry) => {
+      const baseScore = getGitHubPopularityScore(entry);
+      const wasRankedBefore = previousRanks.has(entry.url);
+      const repeatPenalty = wasRankedBefore
+        ? Math.max(1, Math.round(baseScore * REPEAT_GITHUB_SCORE_PENALTY_RATIO))
+        : 0;
+      return {
+        ...entry,
+        rerankScore: Math.max(0, baseScore - repeatPenalty),
+        repeatPenalty
+      };
+    })
+    .sort((left, right) => {
+      const scoreDiff = Number(right.rerankScore ?? 0) - Number(left.rerankScore ?? 0);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      return compareGitHubEntries(left, right);
+    });
+}
+
+async function loadPreviousHighlightRanks(currentReportId) {
+  const reportEntries = await readdir(REPORTS_DIR, { withFileTypes: true }).catch(() => []);
+  const previousReportId = reportEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => name < currentReportId)
+    .sort()
+    .at(-1);
+
+  if (!previousReportId) {
+    return {
+      previousOverviewPath: null,
+      ranks: new Map()
+    };
+  }
+
+  const previousOverviewPath = path.join(REPORTS_DIR, previousReportId, "overview.md");
+  const { readFile } = await import("node:fs/promises");
+  const content = await readFile(previousOverviewPath, "utf8").catch(() => "");
+  if (!content) {
+    return {
+      previousOverviewPath: null,
+      ranks: new Map()
+    };
+  }
+
+  const ranks = new Map();
+  let currentSectionKey = "";
+
+  for (const line of content.split(/\r?\n/)) {
+    const headingMatch = line.match(/^###\s+(.+)$/);
+    if (headingMatch) {
+      currentSectionKey = getSectionKeyFromHeading(headingMatch[1].trim());
+      if (currentSectionKey && !ranks.has(currentSectionKey)) {
+        ranks.set(currentSectionKey, new Map());
+      }
+      continue;
+    }
+
+    if (!currentSectionKey) {
+      continue;
+    }
+
+    const itemMatch = line.match(/^(\d+)\.\s+\*\*\[[^\]]+\]\((https?:\/\/[^)]+)\)\*\*/);
+    if (!itemMatch) {
+      continue;
+    }
+
+    ranks.get(currentSectionKey)?.set(itemMatch[2], Number(itemMatch[1]));
+  }
+
+  return {
+    previousOverviewPath,
+    ranks
+  };
 }
 
 async function writeSourceReports(sourceGroups, { reportDir, dateSlug }) {
@@ -1004,25 +1149,58 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     verbose: options.verbose,
     cache: options.highlightCache
   });
-  const practiceTopEntries = scoredPracticeHighlights.scoredEntries.slice(0, PRACTICE_HIGHLIGHT_LIMIT);
   const nonGithubHighlightCandidates = pickHighlightCandidates(nonGithubGeneralEntries, Math.max(NON_GITHUB_HIGHLIGHT_LIMIT, 10));
   const scoredNonGithubHighlights = await scoreHighlightCandidates(nonGithubHighlightCandidates, {
     config: options.highlightScoringConfig,
     verbose: options.verbose,
     cache: options.highlightCache
   });
-  const nonGithubTopEntries = scoredNonGithubHighlights.scoredEntries.slice(0, NON_GITHUB_HIGHLIGHT_LIMIT);
-  const githubRisingTopEntries = githubEntries
+  const githubRisingEntries = githubEntries
     .filter((entry) => entry.source === "GitHub Rising AI")
     .slice()
-    .sort(compareGitHubEntries)
-    .slice(0, GITHUB_HIGHLIGHT_LIMIT);
-  const githubTopicTopEntries = githubEntries
+    .sort(compareGitHubEntries);
+  const githubTopicEntries = githubEntries
     .filter((entry) => entry.source === "GitHub AI Topic")
     .slice()
-    .sort(compareGitHubEntries)
-    .slice(0, GITHUB_HIGHLIGHT_LIMIT);
-  const githubTopEntries = [...githubRisingTopEntries, ...githubTopicTopEntries];
+    .sort(compareGitHubEntries);
+  const previousHighlightState = await loadPreviousHighlightRanks(reportId);
+  const practiceTopEntries = rerankEntriesWithRepeatPenalty(
+    scoredPracticeHighlights.scoredEntries,
+    previousHighlightState.ranks.get("practice") ?? new Map(),
+    (entry) => getEntryDisplayScore(entry),
+    () => REPEAT_ENTRY_SCORE_PENALTY
+  ).slice(0, PRACTICE_HIGHLIGHT_LIMIT);
+  const nonGithubTopEntries = rerankEntriesWithRepeatPenalty(
+    scoredNonGithubHighlights.scoredEntries,
+    previousHighlightState.ranks.get("news") ?? new Map(),
+    (entry) => getEntryDisplayScore(entry),
+    () => REPEAT_ENTRY_SCORE_PENALTY
+  ).slice(0, NON_GITHUB_HIGHLIGHT_LIMIT);
+  const githubRisingTopEntries = rerankGithubEntriesWithRepeatPenalty(
+    githubRisingEntries,
+    previousHighlightState.ranks.get("github-rising") ?? new Map()
+  ).slice(0, GITHUB_HIGHLIGHT_LIMIT);
+  const githubTopicTopEntries = rerankGithubEntriesWithRepeatPenalty(
+    githubTopicEntries,
+    previousHighlightState.ranks.get("github-topic") ?? new Map()
+  ).slice(0, GITHUB_HIGHLIGHT_LIMIT);
+  const practiceTopEntriesWithChange = applyRankChanges(
+    practiceTopEntries,
+    previousHighlightState.ranks.get("practice") ?? new Map()
+  );
+  const nonGithubTopEntriesWithChange = applyRankChanges(
+    nonGithubTopEntries,
+    previousHighlightState.ranks.get("news") ?? new Map()
+  );
+  const githubRisingTopEntriesWithChange = applyRankChanges(
+    githubRisingTopEntries,
+    previousHighlightState.ranks.get("github-rising") ?? new Map()
+  );
+  const githubTopicTopEntriesWithChange = applyRankChanges(
+    githubTopicTopEntries,
+    previousHighlightState.ranks.get("github-topic") ?? new Map()
+  );
+  const githubTopEntries = [...githubRisingTopEntriesWithChange, ...githubTopicTopEntriesWithChange];
   const sourceReports = await writeSourceReports(sourceGroups, { reportDir, dateSlug });
   const practiceReadIndexRelativePath = path.posix.join("practice-reads", "index.md");
 
@@ -1037,7 +1215,12 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
     ""
   ];
 
-  if (practiceTopEntries.length === 0 && nonGithubTopEntries.length === 0 && githubRisingTopEntries.length === 0 && githubTopicTopEntries.length === 0) {
+  if (
+    practiceTopEntriesWithChange.length === 0 &&
+    nonGithubTopEntriesWithChange.length === 0 &&
+    githubRisingTopEntriesWithChange.length === 0 &&
+    githubTopicTopEntriesWithChange.length === 0
+  ) {
     lines.push("今天没有采集到新条目。");
     lines.push("");
   } else {
@@ -1053,8 +1236,8 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
       lines.push(practiceSummary.stats);
     }
     lines.push("");
-    if (practiceTopEntries.length > 0) {
-      for (const [index, entry] of practiceTopEntries.entries()) {
+    if (practiceTopEntriesWithChange.length > 0) {
+      for (const [index, entry] of practiceTopEntriesWithChange.entries()) {
         appendNonGithubHighlight(lines, entry, index + 1);
       }
     }
@@ -1066,9 +1249,9 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
       lines.push(nonGithubSummary.stats);
     }
     lines.push("");
-    if (nonGithubTopEntries.length === 0) {
+    if (nonGithubTopEntriesWithChange.length === 0) {
     } else {
-      for (const [index, entry] of nonGithubTopEntries.entries()) {
+      for (const [index, entry] of nonGithubTopEntriesWithChange.entries()) {
         appendNonGithubHighlight(lines, entry, index + 1);
       }
     }
@@ -1080,9 +1263,9 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
       lines.push(githubRisingSummary.stats);
     }
     lines.push("");
-    if (githubRisingTopEntries.length === 0) {
+    if (githubRisingTopEntriesWithChange.length === 0) {
     } else {
-      for (const [index, entry] of githubRisingTopEntries.entries()) {
+      for (const [index, entry] of githubRisingTopEntriesWithChange.entries()) {
         appendGithubHighlight(lines, entry, index + 1);
       }
     }
@@ -1094,9 +1277,9 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
       lines.push(githubTopicSummary.stats);
     }
     lines.push("");
-    if (githubTopicTopEntries.length === 0) {
+    if (githubTopicTopEntriesWithChange.length === 0) {
     } else {
-      for (const [index, entry] of githubTopicTopEntries.entries()) {
+      for (const [index, entry] of githubTopicTopEntriesWithChange.entries()) {
         appendGithubHighlight(lines, entry, index + 1);
       }
     }
@@ -1138,8 +1321,9 @@ export async function writeDailyReport(entries, failures = [], options = {}) {
   return {
     reportPath,
     sourceReports,
-    practiceTopEntries,
-    nonGithubTopEntries,
+    previousOverviewPath: previousHighlightState.previousOverviewPath,
+    practiceTopEntries: practiceTopEntriesWithChange,
+    nonGithubTopEntries: nonGithubTopEntriesWithChange,
     githubTopEntries,
     llmHighlightScoredCount: scoredPracticeHighlights.scoredCount + scoredNonGithubHighlights.scoredCount,
     llmHighlightCacheHitCount: scoredPracticeHighlights.cacheHitCount + scoredNonGithubHighlights.cacheHitCount,
